@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline'"
+    />
+    <meta
+      http-equiv="X-Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline'"
+    />
+    <title>Electron-Python 聊天室</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        margin: 0;
+        padding: 0;
+        background-color: #f0f2f5;
+        height: 100vh;
+        overflow: hidden;
+      }
+      
+      .chat-container {
+        display: flex;
+        height: 100vh;
+      }
+      
+      .sidebar {
+        width: 250px;
+        background-color: #2c3e50;
+        color: white;
+        padding: 20px;
+        display: flex;
+        flex-direction: column;
+      }
+      
+      .sidebar h2 {
+        margin: 0 0 20px 0;
+        font-size: 18px;
+        text-align: center;
+      }
+      
+      .user-info {
+        margin-bottom: 20px;
+        padding: 15px;
+        background-color: #34495e;
+        border-radius: 8px;
+      }
+      
+      .username {
+        font-weight: bold;
+        margin-bottom: 5px;
+      }
+      
+      .status {
+        font-size: 12px;
+        color: #bdc3c7;
+      }
+      
+      .online-users {
+        flex: 1;
+        overflow-y: auto;
+      }
+      
+      .online-users h3 {
+        margin: 0 0 10px 0;
+        font-size: 14px;
+        color: #bdc3c7;
+      }
+      
+      .user-item {
+        padding: 8px 12px;
+        margin-bottom: 5px;
+        background-color: #34495e;
+        border-radius: 6px;
+        font-size: 14px;
+      }
+      
+      .main-chat {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        background-color: white;
+      }
+      
+      .chat-header {
+        padding: 20px;
+        background-color: #3498db;
+        color: white;
+        text-align: center;
+        font-size: 18px;
+        font-weight: bold;
+      }
+      
+      .chat-messages {
+        flex: 1;
+        padding: 20px;
+        overflow-y: auto;
+        background-color: #f8f9fa;
+      }
+      
+      .message {
+        margin-bottom: 15px;
+        padding: 12px 16px;
+        border-radius: 18px;
+        max-width: 70%;
+        word-wrap: break-word;
+      }
+      
+      .message.own {
+        background-color: #007acc;
+        color: white;
+        margin-left: auto;
+        text-align: right;
+      }
+      
+      .message.other {
+        background-color: #e9ecef;
+        color: #333;
+        margin-right: auto;
+      }
+      
+      .message.system {
+        background-color: #fff3cd;
+        color: #856404;
+        text-align: center;
+        margin: 10px auto;
+        max-width: 90%;
+        font-style: italic;
+      }
+      
+      .message-header {
+        font-size: 12px;
+        opacity: 0.7;
+        margin-bottom: 4px;
+      }
+      
+      .message-text {
+        font-size: 14px;
+        line-height: 1.4;
+      }
+      
+      .chat-input {
+        padding: 20px;
+        background-color: white;
+        border-top: 1px solid #e0e0e0;
+        display: flex;
+        gap: 10px;
+      }
+      
+      .message-input {
+        flex: 1;
+        padding: 12px 16px;
+        border: 1px solid #ddd;
+        border-radius: 25px;
+        font-size: 14px;
+        outline: none;
+      }
+      
+      .message-input:focus {
+        border-color: #007acc;
+      }
+      
+      .send-button {
+        padding: 12px 24px;
+        background-color: #007acc;
+        color: white;
+        border: none;
+        border-radius: 25px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: bold;
+      }
+      
+      .send-button:hover {
+        background-color: #005a9e;
+      }
+      
+      .send-button:disabled {
+        background-color: #ccc;
+        cursor: not-allowed;
+      }
+      
+      .login-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.8);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 1000;
+      }
+      
+      .login-form {
+        background-color: white;
+        padding: 40px;
+        border-radius: 12px;
+        text-align: center;
+        min-width: 300px;
+      }
+      
+      .login-form h2 {
+        margin: 0 0 20px 0;
+        color: #333;
+      }
+      
+      .login-form input {
+        width: 100%;
+        padding: 12px 16px;
+        border: 1px solid #ddd;
+        border-radius: 6px;
+        font-size: 14px;
+        margin-bottom: 20px;
+        outline: none;
+      }
+      
+      .login-form input:focus {
+        border-color: #007acc;
+      }
+      
+      .login-form button {
+        width: 100%;
+        padding: 12px;
+        background-color: #007acc;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        font-size: 14px;
+        font-weight: bold;
+        cursor: pointer;
+      }
+      
+      .login-form button:hover {
+        background-color: #005a9e;
+      }
+      
+      .hidden {
+        display: none !important;
+      }
+      
+      .error-message {
+        color: #e74c3c;
+        font-size: 12px;
+        margin-top: 5px;
+      }
+      
+      .network-info, .connection-mode, .client-connection, .username-section {
+        margin-bottom: 20px;
+        padding: 15px;
+        background-color: #f8f9fa;
+        border-radius: 6px;
+        border: 1px solid #e9ecef;
+      }
+      
+      .network-info h3, .connection-mode h3, .client-connection h3, .username-section h3 {
+        margin: 0 0 10px 0;
+        font-size: 14px;
+        color: #495057;
+      }
+      
+      .network-details {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      
+      .network-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 13px;
+      }
+      
+      .network-item label {
+        font-weight: 500;
+        color: #6c757d;
+      }
+      
+      .network-item span {
+        font-family: monospace;
+        background-color: #e9ecef;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-size: 12px;
+      }
+      
+      .mode-options {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      
+      .mode-options label {
+        display: flex;
+        align-items: center;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      
+      .mode-options input[type="radio"] {
+        margin-right: 8px;
+        width: auto;
+      }
+      
+      .client-connection input {
+        margin-bottom: 10px;
+      }
+      
+      .client-connection input:last-child {
+        margin-bottom: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Login Overlay -->
+    <div id="loginOverlay" class="login-overlay">
+      <div class="login-form">
+        <h2>Electron-Python 聊天室</h2>
+        
+        <!-- Network Info -->
+        <div class="network-info">
+          <h3>网络信息</h3>
+          <div class="network-details">
+            <div class="network-item">
+              <label>本机IP:</label>
+              <span id="localIP">获取中...</span>
+            </div>
+            <div class="network-item">
+              <label>服务器端口:</label>
+              <span id="serverPort">5001</span>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Connection Mode -->
+        <div class="connection-mode">
+          <h3>连接模式</h3>
+          <div class="mode-options">
+            <label>
+              <input type="radio" name="mode" value="host" checked>
+              作为服务器 (其他设备连接到此设备)
+            </label>
+            <label>
+              <input type="radio" name="mode" value="client">
+              连接到其他设备
+            </label>
+          </div>
+        </div>
+        
+        <!-- Client Connection -->
+        <div id="clientConnection" class="client-connection hidden">
+          <h3>连接到服务器</h3>
+          <input type="text" id="serverIPInput" placeholder="输入服务器IP地址 (如: 192.168.1.100)">
+          <input type="number" id="serverPortInput" placeholder="端口" value="5001">
+        </div>
+        
+        <!-- Username -->
+        <div class="username-section">
+          <h3>用户信息</h3>
+          <input type="text" id="usernameInput" placeholder="输入您的用户名" maxlength="20">
+        </div>
+        
+        <div id="loginError" class="error-message hidden"></div>
+        <button onclick="joinChat()">加入聊天</button>
+      </div>
+    </div>
+
+    <!-- Chat Interface -->
+    <div id="chatInterface" class="chat-container hidden">
+      <div class="sidebar">
+        <h2>聊天室</h2>
+        <div class="user-info">
+          <div class="username" id="currentUsername">用户名</div>
+          <div class="status" id="connectionStatus">连接中...</div>
+        </div>
+        <div class="online-users">
+          <h3>在线用户 (<span id="onlineCount">0</span>)</h3>
+          <div id="onlineUsersList"></div>
+        </div>
+      </div>
+      
+      <div class="main-chat">
+        <div class="chat-header">
+          Electron-Python 聊天室
+        </div>
+        
+        <div class="chat-messages" id="chatMessages">
+          <!-- Messages will be added here -->
+        </div>
+        
+        <div class="chat-input">
+          <input type="text" id="messageInput" class="message-input" placeholder="输入消息..." disabled>
+          <button id="sendButton" class="send-button" onclick="sendMessage()" disabled>发送</button>
+        </div>
+      </div>
+    </div>
+    
+    <script src="chat.js"></script>
+  </body>
+</html>

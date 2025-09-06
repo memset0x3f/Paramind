@@ -186,7 +186,7 @@ cython_debug/
 #  that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
 #  and can be added to the global gitignore or merged into this file. However, if you prefer, 
 #  you could uncomment the following to ignore the entire vscode folder
-# .vscode/
+.vscode/
 
 # Ruff stuff:
 .ruff_cache/
@@ -205,3 +205,23 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Node.js
+# Ignore node_modules and other Node.js-related build artifacts and caches
+node_modules/
+npm-debug.log
+yarn-error.log
+yarn-debug.log
+.pnpm-debug.log
+.lerna/
+coverage/
+out/
+tsconfig.tsbuildinfo
+# Optional: Lock files (uncomment to ignore, commonly included for reproducibility)
+#package-lock.json
+#yarn.lock
+#pnpm-lock.yaml
+# Cache directories
+.npm/
+.yarn/
+.pnpm-store/

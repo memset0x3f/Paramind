@@ -225,3 +225,4 @@ tsconfig.tsbuildinfo
 .npm/
 .yarn/
 .pnpm-store/
+package-lock.json

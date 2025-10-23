@@ -43,6 +43,7 @@ class P2PSignalingServer {
     }
 
     handleMessage(ws, message, req) {
+        console.log('Received message:', message);
         const { type } = message;
 
         if (!type) {

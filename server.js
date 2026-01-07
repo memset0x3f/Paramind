@@ -55,7 +55,7 @@ class P2PSignalingServer {
             case 'register':
                 this.handleRegister(ws, message, req);
                 break;
-            case 'punch_request':
+            case 'punchRequest':
                 this.handlePunchRequest(ws, message);
                 break;
             case 'heartbeat':
@@ -142,7 +142,7 @@ class P2PSignalingServer {
         });
 
         const message = {
-            type: 'all_peers',
+            type: 'allPeers',
             group_id: groupId,
             peers: peers
         };
@@ -163,7 +163,7 @@ class P2PSignalingServer {
                 const client = this.clients.get(uuid);
                 if (client) {
                     const message = {
-                        type: 'new_peer',
+                        type: 'newPeer',
                         peer: {
                             uuid: newClient.uuid,
                             public_address: {
@@ -214,7 +214,7 @@ class P2PSignalingServer {
         }
 
         const message = {
-            type: 'punch_notification',
+            type: 'punchNotification',
             requester: {
                 uuid: requester.uuid,
                 public_address: {
@@ -289,7 +289,7 @@ class P2PSignalingServer {
             const client = this.clients.get(uuid);
             if (client) {
                 const message = {
-                    type: 'peer_disconnected',
+                    type: 'peerDisconnected',
                     peer_uuid: disconnectedUuid,
                     group_id: groupId
                 };

@@ -26,9 +26,12 @@ class Site:
     Represents a network site with the form of (IP, port).
     """
 
-    def __init__(self, ip: str, port: int):
+    def __init__(self, ip: Optional[str], port: Optional[int]):
         self.ip = ip
         self.port = port
+
+    def isValid(self) -> bool:
+        return self.ip is not None and self.port is not None
 
 
 class PeerInfo(Site):
@@ -36,6 +39,16 @@ class PeerInfo(Site):
     Represents information of a peer in the P2P network.
     """
 
-    def __init__(self, ip: str, port: int, uuid: UUID):
+    def __init__(
+        self,
+        ip: Optional[str] = None,
+        port: Optional[int] = None,
+        uuid: Optional[UUID] = None,
+        isConnected: bool = False,
+    ):
         super().__init__(ip, port)
         self.uuid = uuid
+        self.isConnected = isConnected
+
+    def isValid(self) -> bool:
+        return super().isValid() and self.uuid is not None

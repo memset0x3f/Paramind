@@ -1,18 +1,16 @@
 import torch
 from transformers import AutoModelForCausalLM, AutoConfig
 from modelscope import snapshot_download
-from torchinfo import summary # 这是一个神器
+from torchinfo import summary  # 这是一个神器
 
 # 1. 下载模型 (Qwen2.5-0.5B)
 print("Downloading Qwen2.5-0.5B...")
-model_dir = snapshot_download('Qwen/Qwen2.5-7B-Instruct')
+model_dir = snapshot_download("Qwen/Qwen2.5-7B-Instruct")
 
 # 2. 加载模型
 # 注意：为了方便看结构，这里加载到 CPU 即可
 model = AutoModelForCausalLM.from_pretrained(
-    model_dir, 
-    torch_dtype=torch.float16, # 使用半精度模拟真实场景
-    device_map="cpu" 
+    model_dir, torch_dtype=torch.float16, device_map="cpu"  # 使用半精度模拟真实场景
 )
 
 config = AutoConfig.from_pretrained(model_dir)
@@ -32,10 +30,12 @@ print(f"Vocab Size: {vocab_size}")
 # 计算 P2P 传输量
 # 假设 seq_len = 1 (Decode阶段)
 # 数据类型 float16 = 2 Bytes
-transfer_size_bytes = 1 * h_size * 2 
+transfer_size_bytes = 1 * h_size * 2
 print(f"\n=== P2P 传输压力预估 ===")
 print(f"如果每次传输 1 个 Token 的 Hidden State:")
-print(f"数据包大小 = 1 * {h_size} * 2 Bytes = {transfer_size_bytes} Bytes ({transfer_size_bytes/1024:.2f} KB)")
+print(
+    f"数据包大小 = 1 * {h_size} * 2 Bytes = {transfer_size_bytes} Bytes ({transfer_size_bytes/1024:.2f} KB)"
+)
 print("这个大小在网络上传输极快！适合做实验。")
 
 # ==========================================
@@ -54,4 +54,9 @@ dummy_input = torch.randint(0, vocab_size, (1, 10), dtype=torch.long)
 
 # 打印详细的层级分析
 # depth=2 只显示到 Layer 级别，不显示 Layer 内部的 Attention 细节，方便看整体
-summary(model, input_data=dummy_input, depth=2, col_names=["input_size", "output_size", "num_params"])
+summary(
+    model,
+    input_data=dummy_input,
+    depth=2,
+    col_names=["input_size", "output_size", "num_params"],
+)

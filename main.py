@@ -52,7 +52,7 @@ while len(client.peerInfo) < 1 or (not list(client.peerInfo.values())[0].isConne
 
 if clientId == 1:
     print("Starting inference...")
-    prompt = "H"
+    prompt = "Why is sky blue?"
     client.infer(prompt)
 else:
     while True:

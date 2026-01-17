@@ -36,6 +36,7 @@ class P2PClient:
         self.signalServerWsThread = None
         self.isConnectedToSignalServer = False
         self.peerInfo = {}
+        self.torchDataBuffer = {}
         self.udpPort = findFreePort()
         _, externalIP, externalPort = self._queryStunInfo(self.udpPort)
         self.peerSocket = createUdpSocket(self.udpPort)
@@ -148,6 +149,7 @@ class P2PClient:
         input = self.tokenizer(text, return_tensors="pt").input_ids
         input = input.to(self.device)
         self.kvCache = None
+        response = ""
         with torch.no_grad():
             for step in range(50):
                 hidden_states, self.kvCache = self.model.forward(
@@ -166,14 +168,12 @@ class P2PClient:
                     ),
                     input=True,
                 )
-                print("Sent hidden states to peer, waiting for response...")
 
                 next_token_id = self.tokenQueue.get()  # LongTensor [1, 1]
                 # === 发送给 Client (用于显示) ===
                 # send_data(node1, next_token_id, client_addr)
                 word = self.tokenizer.decode([next_token_id.item()])
-                print(word, end="", flush=True)
-
+                response += word
                 # === 准备下一轮 ===
                 next_token_id = next_token_id.to(self.device)
 
@@ -183,6 +183,7 @@ class P2PClient:
                     break
 
                 input = next_token_id  # Decode 阶段的输入
+        print(f"Response: {response}")
 
     def _sendHolePunchMsg(self, targetPeer: PeerInfo):
         logger.info(
@@ -267,15 +268,10 @@ class P2PClient:
     @_peerHandlers.register("torchInput")
     def _handlePeerTorchInput(self, data):
         peerUuid = data["uuid"]
-        if peerUuid not in self.peerInfo:
-            logger.warning(f"Received torch data from unknown peer {peerUuid}")
-            return
-        tensorData = deserializeTorchData(data["obj"])
-        logger.info(f"Received torch data from peer {peerUuid}")
-        print(f"Received tensor data from peer {peerUuid}")
-
+        tensorData = self._recvTorchData(data)
         if tensorData is None:
             return
+        logger.info(f"Received torch data from peer {peerUuid}")
 
         tensorData = tensorData.to(self.device)
         with torch.no_grad():
@@ -300,7 +296,9 @@ class P2PClient:
 
     @_peerHandlers.register("torchOutput")
     def _handlePeerTorchOutput(self, data):
-        tensorData = deserializeTorchData(data["obj"])
+        tensorData = self._recvTorchData(data)
+        if tensorData is None:
+            return
         logger.info(f"Received torch output from peer {data['uuid']}: {tensorData}")
         self.tokenQueue.put(tensorData)
 
@@ -323,6 +321,21 @@ class P2PClient:
         logger.debug(f"Received message: {data}")
         if self._signalServerHandlers.get(data["type"]):
             self._signalServerHandlers[data["type"]](self, data)
+
+    def _recvTorchData(self, data):
+        nChunk = data["nChunk"]
+        uuid = str(data["uuid"])
+        chunkId = data["chunkId"]
+        if uuid not in self.torchDataBuffer:
+            self.torchDataBuffer[uuid] = [None] * nChunk
+        self.torchDataBuffer[uuid][chunkId] = data["obj"]
+        if all(chunk is not None for chunk in self.torchDataBuffer[uuid]):
+            # All chunks received, reconstruct the full data
+            fullB64Str = "".join(self.torchDataBuffer[uuid])
+            tensorData = deserializeTorchData(fullB64Str)
+            del self.torchDataBuffer[uuid]  # Clear buffer
+            return tensorData
+        return None
 
     @staticmethod
     def _queryStunInfo(port):

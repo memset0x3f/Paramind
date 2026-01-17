@@ -19,7 +19,7 @@ def testSignalServerConnection():
     signalServer = os.environ["PARAMIND_SIGSERVER"]
     if not signalServer:
         assert False, "Environment variable PARAMIND_SIGSERVER is not set."
-    client = P2PClient(signalServer)
+    client = P2PClient(signalServer, (0, 12))
     try:
         client.connect()
     except Exception as e:

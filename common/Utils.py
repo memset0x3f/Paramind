@@ -1,4 +1,9 @@
 import socket
+import struct
+import io
+import torch
+import json
+import base64
 
 
 def isPortValid(port):
@@ -24,6 +29,29 @@ def createUdpSocket(port: int = 0):
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.bind(("", port))
     return s
+
+
+def sendTorchData(sock, data, uuid, targetAddr, id=0, input=True):
+    buffer = io.BytesIO()
+    torch.save(data, buffer)
+    serialized_data = buffer.getvalue()
+
+    jsonData = json.dumps(
+        {
+            "type": "torchInput" if input else "torchOutput",
+            "uuid": str(uuid),
+            "id": id,
+            "obj": base64.b64encode(serialized_data).decode(),
+        }
+    ).encode()
+
+    sock.sendto(jsonData, targetAddr)
+
+
+def deserializeTorchData(objStr: str):
+    serialized_data = base64.b64decode(objStr.encode())
+    buffer = io.BytesIO(serialized_data)
+    return torch.load(buffer)
 
 
 class FunctionRegistry(dict):

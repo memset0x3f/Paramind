@@ -5,12 +5,19 @@ import time
 import logging
 import uuid
 import stun
+import torch
+import queue
 from typing import Optional
+from modelscope import snapshot_download
+from transformers import AutoTokenizer
 
 from common import RuntimeException, PeerInfo
 from common import createUdpSocket, findFreePort
 from common import FunctionRegistry
 from common.Constants import UDP_CHUNK_SIZE
+from common.Utils import sendTorchData, deserializeTorchData
+from inference import QwenSlice
+
 
 logger = logging.getLogger(__name__)
 
@@ -23,13 +30,12 @@ class P2PClient:
     _signalServerHandlers = FunctionRegistry()
     _peerHandlers = FunctionRegistry()
 
-    def __init__(self, signalServer: str):
+    def __init__(self, signalServer: str, modelLayer: tuple[int, int]):
         self.signalServerAddr = signalServer
         self.signalServerWs = None
         self.signalServerWsThread = None
         self.isConnectedToSignalServer = False
         self.peerInfo = {}
-
         self.udpPort = findFreePort()
         _, externalIP, externalPort = self._queryStunInfo(self.udpPort)
         self.peerSocket = createUdpSocket(self.udpPort)
@@ -38,6 +44,17 @@ class P2PClient:
 
         self.recvThread = threading.Thread(target=self.recvPeerMessage, daemon=True)
         self.recvThread.start()
+
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.modelPath = snapshot_download("Qwen/Qwen2.5-0.5B-Instruct")
+        self.model = QwenSlice(
+            self.modelPath, modelLayer[0], modelLayer[1], device=self.device
+        )
+        self.kvCache: Optional[torch.Tensor] = None
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            self.modelPath, trust_remote_code=True
+        )
+        self.tokenQueue = queue.Queue()
 
     def connect(self):
         try:
@@ -72,9 +89,9 @@ class P2PClient:
         while True:
             data, addr = self.peerSocket.recvfrom(UDP_CHUNK_SIZE)
             data = data.decode()
-            logger.info(f"Received UDP message from {addr}: {data}")
             try:
                 jsonData = json.loads(data)
+                logger.info(f"Received UDP message from {addr}: {jsonData["type"]}")
             except json.JSONDecodeError:
                 logger.warning(f"Received non-JSON UDP message from {addr}: {data}")
                 continue
@@ -120,6 +137,53 @@ class P2PClient:
         self.signalServerWs.send(json.dumps(holePunchMessage))
         self._sendHolePunchMsg(targetPeer)
 
+    def infer(self, prompt: str):
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": prompt},
+        ]
+        text = self.tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+        input = self.tokenizer(text, return_tensors="pt").input_ids
+        input = input.to(self.device)
+        self.kvCache = None
+        with torch.no_grad():
+            for step in range(50):
+                hidden_states, self.kvCache = self.model.forward(
+                    input, past_key_values=self.kvCache
+                )
+                print(
+                    f"Step {step}, Hidden States Shape: {hidden_states.shape}. Sending to peer {list(self.peerInfo.values())[0].ip}:{list(self.peerInfo.values())[0].port}..."
+                )
+                sendTorchData(
+                    self.peerSocket,
+                    hidden_states.cpu(),
+                    self.info.uuid,
+                    (
+                        list(self.peerInfo.values())[0].ip,
+                        list(self.peerInfo.values())[0].port,
+                    ),
+                    input=True,
+                )
+                print("Sent hidden states to peer, waiting for response...")
+
+                next_token_id = self.tokenQueue.get()  # LongTensor [1, 1]
+                # === 发送给 Client (用于显示) ===
+                # send_data(node1, next_token_id, client_addr)
+                word = self.tokenizer.decode([next_token_id.item()])
+                print(word, end="", flush=True)
+
+                # === 准备下一轮 ===
+                next_token_id = next_token_id.to(self.device)
+
+                # 检查是否是结束符 (EOS)
+                if next_token_id.item() in [151643, 151645]:  # Qwen EOS tokens
+                    print("Generated EOS.")
+                    break
+
+                input = next_token_id  # Decode 阶段的输入
+
     def _sendHolePunchMsg(self, targetPeer: PeerInfo):
         logger.info(
             f"Sending hole punch message to peer {targetPeer.uuid} at {targetPeer.ip}:{targetPeer.port}"
@@ -161,6 +225,7 @@ class P2PClient:
             uuid.UUID(newPeer["uuid"]),
         )
         logger.info(f"New peer joined: {newPeer}")
+        self.holePunch(self.peerInfo[newPeer["uuid"]])
 
     @_signalServerHandlers.register("punchNotification")
     def _handlePunchNotification(self, data):
@@ -169,6 +234,75 @@ class P2PClient:
             logger.warning(f"Received punch notification from unknown peer {peerUuid}")
             return
         self._sendHolePunchMsg(self.peerInfo[peerUuid])
+
+    @_peerHandlers.register("punch")
+    def _handlePeerPunch(self, data):
+        peerUuid = data["uuid"]
+        if peerUuid not in self.peerInfo:
+            logger.warning(f"Received punch from unknown peer {peerUuid}")
+            return
+        successMsg = json.dumps(
+            {
+                "type": "punchSuccess",
+                "uuid": str(self.info.uuid),
+            }
+        )
+        self.peerSocket.sendto(
+            successMsg.encode(),
+            (self.peerInfo[peerUuid].ip, self.peerInfo[peerUuid].port),
+        )
+
+    @_peerHandlers.register("punchSuccess")
+    def _handlePeerPunchSuccess(self, data):
+        peerUuid = data["uuid"]
+        if peerUuid not in self.peerInfo:
+            logger.warning(f"Received punch success from unknown peer {peerUuid}")
+            return
+        self.peerInfo[peerUuid].isConnected = True
+        logger.info(f"Established connection with peer {peerUuid}")
+        print(
+            f"Established P2P connection with peer {self.peerInfo[peerUuid].ip}:{self.peerInfo[peerUuid].port}"
+        )
+
+    @_peerHandlers.register("torchInput")
+    def _handlePeerTorchInput(self, data):
+        peerUuid = data["uuid"]
+        if peerUuid not in self.peerInfo:
+            logger.warning(f"Received torch data from unknown peer {peerUuid}")
+            return
+        tensorData = deserializeTorchData(data["obj"])
+        logger.info(f"Received torch data from peer {peerUuid}")
+        print(f"Received tensor data from peer {peerUuid}")
+
+        if tensorData is None:
+            return
+
+        tensorData = tensorData.to(self.device)
+        with torch.no_grad():
+            logits, self.kvCache = self.model.forward(
+                tensorData, past_key_values=self.kvCache
+            )
+
+            # 3. Greedy Decoding (取最大概率)
+            # logits: [Batch, Seq, Vocab] -> 取最后一个 token
+            next_token_logits = logits[:, -1, :]
+            next_token_id = torch.argmax(next_token_logits, dim=-1).unsqueeze(
+                0
+            )  # [1, 1]
+
+        sendTorchData(
+            self.peerSocket,
+            next_token_id.cpu(),
+            self.info.uuid,
+            (self.peerInfo[peerUuid].ip, self.peerInfo[peerUuid].port),
+            input=False,
+        )
+
+    @_peerHandlers.register("torchOutput")
+    def _handlePeerTorchOutput(self, data):
+        tensorData = deserializeTorchData(data["obj"])
+        logger.info(f"Received torch output from peer {data['uuid']}: {tensorData}")
+        self.tokenQueue.put(tensorData)
 
     def _onOpen(self, ws):
         self.isConnectedToSignalServer = True

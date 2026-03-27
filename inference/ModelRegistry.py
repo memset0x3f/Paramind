@@ -48,7 +48,9 @@ _FAMILY_DEFAULTS = {
         "norm_key": "model.norm",
         "lm_head_key": "lm_head",
         "layer_prefix": "model.layers",
-        "rotary_key": None,  # RoPE is computed inline in Llama attention
+        # Same path as HuggingFace LlamaModel: shared LlamaRotaryEmbedding on model,
+        # passed as position_embeddings (cos, sin) into each decoder layer.
+        "rotary_key": "model.rotary_emb",
     },
 }
 

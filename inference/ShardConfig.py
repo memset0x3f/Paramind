@@ -1,11 +1,14 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import List
+from typing import List, Optional
 
 
 class ModelFamily(Enum):
     QWEN = "qwen"
     LLAMA = "llama"
+
+
+SUPPORTED_DTYPES = frozenset({"float16", "bfloat16", "float32"})
 
 
 @dataclass(frozen=True)
@@ -15,7 +18,7 @@ class ShardConfig:
     start_layer: int
     end_layer: int
     total_layers: int
-    dtype: str
+    dtype: Optional[str] = None
 
     def __post_init__(self):
         if self.end_layer <= self.start_layer:
@@ -25,6 +28,10 @@ class ShardConfig:
         if self.end_layer > self.total_layers:
             raise ValueError(
                 f"end_layer ({self.end_layer}) must be <= total_layers ({self.total_layers})"
+            )
+        if self.dtype is not None and self.dtype not in SUPPORTED_DTYPES:
+            raise ValueError(
+                f"dtype ({self.dtype}) must be one of {sorted(SUPPORTED_DTYPES)}"
             )
 
     @property
@@ -45,7 +52,7 @@ class ShardConfig:
         family: ModelFamily,
         total_layers: int,
         num_nodes: int,
-        dtype: str,
+        dtype: Optional[str] = None,
     ) -> List["ShardConfig"]:
         base = total_layers // num_nodes
         remainder = total_layers % num_nodes

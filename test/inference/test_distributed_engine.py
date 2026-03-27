@@ -17,7 +17,6 @@ def test_distributed_two_process_simulation():
                 0,
                 12,
                 24,
-                "float16",
             ),
             ShardConfig(
                 "Qwen/Qwen2.5-0.5B-Instruct",
@@ -25,7 +24,6 @@ def test_distributed_two_process_simulation():
                 12,
                 24,
                 24,
-                "float16",
             ),
         ],
         device="cpu",
@@ -70,7 +68,6 @@ def test_distributed_engine_defers_tokenizer_loading(monkeypatch):
                 0,
                 24,
                 24,
-                "float16",
             ),
         ],
         device="cpu",

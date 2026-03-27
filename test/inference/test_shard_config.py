@@ -9,13 +9,13 @@ def test_shard_config_creation():
         start_layer=0,
         end_layer=14,
         total_layers=28,
-        dtype="float16",
     )
     assert cfg.start_layer == 0
     assert cfg.end_layer == 14
     assert cfg.num_layers == 14
     assert cfg.is_first_shard is True
     assert cfg.is_last_shard is False
+    assert cfg.dtype is None
 
 
 def test_shard_config_last_shard():
@@ -39,7 +39,15 @@ def test_shard_config_validation():
             start_layer=14,
             end_layer=10,  # end < start
             total_layers=28,
-            dtype="float16",
+        )
+    with pytest.raises(ValueError):
+        ShardConfig(
+            model_id="Qwen/Qwen2.5-1.5B-Instruct",
+            family=ModelFamily.QWEN,
+            start_layer=0,
+            end_layer=14,
+            total_layers=28,
+            dtype="not-a-real-dtype",
         )
 
 

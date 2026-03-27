@@ -114,6 +114,24 @@ class ShardLoader:
         self.device = device
         self.arch_info = ModelRegistry.get(config.family, config.model_id)
 
+    def _config_torch_dtype(self) -> torch.dtype | None:
+        mapping = {
+            "float16": torch.float16,
+            "bfloat16": torch.bfloat16,
+            "float32": torch.float32,
+        }
+        if self.config.dtype is None:
+            return None
+        try:
+            return mapping[self.config.dtype]
+        except KeyError as exc:
+            raise ValueError(f"Unsupported dtype: {self.config.dtype}") from exc
+
+    @staticmethod
+    def _native_state_dict_dtype(state_dict: dict) -> torch.dtype | None:
+        first_tensor = next(iter(state_dict.values()), None)
+        return None if first_tensor is None else first_tensor.dtype
+
     def load(self) -> ModelShard:
         """Load a model shard using selective weight loading.
 
@@ -130,13 +148,7 @@ class ShardLoader:
         model_path = self._resolve_model_path()
         weight_map = self._parse_weight_index(model_path)
 
-        # Step 1: Create empty model shell (meta device, no memory allocated)
-        with torch.device("meta"):
-            shell = AutoModelForCausalLM.from_config(
-                model_config, torch_dtype=torch.float16, trust_remote_code=True
-            )
-
-        # Step 2: Determine which safetensors keys we need
+        # Step 1: Determine which safetensors keys we need
         arch = self.arch_info
         needed_prefixes = []
 
@@ -163,7 +175,7 @@ class ShardLoader:
             if any(key.startswith(p) for p in needed_prefixes):
                 files_to_keys.setdefault(shard_file, []).append(key)
 
-        # Step 3: Load only needed tensors from safetensors
+        # Step 2: Load only needed tensors from safetensors
         state_dict = {}
         for shard_file, keys in files_to_keys.items():
             full_path = os.path.join(model_path, shard_file)
@@ -172,14 +184,29 @@ class ShardLoader:
                 if k in shard_weights:
                     state_dict[k] = shard_weights[k]
 
+        target_dtype = self._config_torch_dtype() or self._native_state_dict_dtype(
+            state_dict
+        )
+
+        # Step 3: Create empty model shell (meta device, no memory allocated)
+        shell_kwargs = {"trust_remote_code": True}
+        if target_dtype is not None:
+            shell_kwargs["torch_dtype"] = target_dtype
+        with torch.device("meta"):
+            shell = AutoModelForCausalLM.from_config(model_config, **shell_kwargs)
+
         # Step 4: Assemble shard by extracting components and loading individually
-        shard = self._assemble_shard(shell, model_config, state_dict)
+        shard = self._assemble_shard(shell, model_config, state_dict, target_dtype)
         shard.eval()
         del shell
         return shard
 
     def _assemble_shard(
-        self, shell: AutoModelForCausalLM, model_config, state_dict: dict
+        self,
+        shell: AutoModelForCausalLM,
+        model_config,
+        state_dict: dict,
+        target_dtype: torch.dtype | None,
     ) -> ModelShard:
         """Build ModelShard by extracting and loading components from meta shell.
 
@@ -199,7 +226,7 @@ class ShardLoader:
                 if k.startswith(layer_prefix)
             }
             layer.load_state_dict(layer_state, assign=True)
-            layer = layer.to(self.device)
+            layer = self._move_module(layer, target_dtype)
             layers.append(layer)
 
         # --- Embed tokens (first shard always; last shard for weight tying only) ---
@@ -215,7 +242,7 @@ class ShardLoader:
                     if k.startswith(embed_prefix)
                 }
                 embed_tokens.load_state_dict(embed_state, assign=True)
-                embed_tokens = embed_tokens.to(self.device)
+                embed_tokens = self._move_module(embed_tokens, target_dtype)
         elif self.config.is_last_shard and embed_in_state:
             # Last shard: load embed into shell temporarily for weight tying only
             embed_tmp = shell.model.embed_tokens
@@ -225,9 +252,10 @@ class ShardLoader:
                 if k.startswith(embed_prefix)
             }
             embed_tmp.load_state_dict(embed_state, assign=True)
+            shell.model.embed_tokens = self._move_module(embed_tmp, target_dtype)
 
         # --- Rotary emb (Qwen only — computed module, no stored weights in safetensors) ---
-        rotary_emb = self._build_rotary_emb(shell, model_config)
+        rotary_emb = self._build_rotary_emb(shell, model_config, target_dtype)
 
         # --- Norm + LM head (last shard only) ---
         norm = None
@@ -242,7 +270,7 @@ class ShardLoader:
                 if k.startswith(norm_prefix)
             }
             norm.load_state_dict(norm_state, assign=True)
-            norm = norm.to(self.device)
+            norm = self._move_module(norm, target_dtype)
 
             # LM head — handle weight tying: Qwen ties lm_head.weight to embed_tokens.weight
             # The weights may be stored under embed_tokens key, not lm_head key
@@ -259,10 +287,12 @@ class ShardLoader:
                 # lm_head has its own weights in state_dict
                 lm_head = shell.lm_head
                 lm_head.load_state_dict(head_state, assign=True)
-                lm_head = lm_head.to(self.device)
+                lm_head = self._move_module(lm_head, target_dtype)
             elif embed_in_state:
                 # Weight tying: lm_head shares with embed_tokens (Qwen pattern)
-                lm_head = shell.lm_head
+                lm_head = shell.lm_head.to_empty(device=self.device)
+                if target_dtype is not None:
+                    lm_head = lm_head.to(dtype=target_dtype)
                 lm_head.weight = shell.model.embed_tokens.weight
 
         return ModelShard(
@@ -275,7 +305,12 @@ class ShardLoader:
             model_config=model_config,
         )
 
-    def _build_rotary_emb(self, shell: AutoModelForCausalLM, model_config):
+    def _build_rotary_emb(
+        self,
+        shell: AutoModelForCausalLM,
+        model_config,
+        target_dtype: torch.dtype | None,
+    ):
         """Build a non-meta rotary embedding module on the target device.
 
         Qwen keeps rotary_emb at model level, but its buffers are computed from
@@ -297,13 +332,20 @@ class ShardLoader:
         target_device = torch.device(self.device)
 
         try:
-            return rotary_cls(config=model_config, device=target_device)
+            rotary_emb = rotary_cls(config=model_config, device=target_device)
         except TypeError:
             try:
-                return rotary_cls(model_config, device=target_device)
+                rotary_emb = rotary_cls(model_config, device=target_device)
             except TypeError:
                 rotary_emb = rotary_cls(config=model_config)
-                return rotary_emb.to(target_device)
+        if target_dtype is None:
+            return rotary_emb.to(target_device)
+        return rotary_emb.to(device=target_device, dtype=target_dtype)
+
+    def _move_module(self, module: nn.Module, target_dtype: torch.dtype | None):
+        if target_dtype is None:
+            return module.to(self.device)
+        return module.to(device=self.device, dtype=target_dtype)
 
     def _resolve_model_path(self) -> str:
         """Find model on disk (HuggingFace cache or modelscope)."""

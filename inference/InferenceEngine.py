@@ -28,7 +28,6 @@ class LocalInferenceEngine:
             start_layer=0,
             end_layer=arch_info.total_layers,
             total_layers=arch_info.total_layers,
-            dtype="float16",
         )
         self.shard = ShardLoader(cfg, device=device).load()
         self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)

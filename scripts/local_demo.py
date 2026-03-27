@@ -80,7 +80,6 @@ def run_distributed_sim_demo(
         family=family,
         total_layers=arch_info.total_layers,
         num_nodes=num_shards,
-        dtype="float16",
     )
 
     print(f"=== Demo B: {num_shards}-shard distributed simulation ===")

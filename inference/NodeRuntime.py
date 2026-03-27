@@ -126,7 +126,6 @@ class NodeRuntime:
             start_layer=assignment.start_layer,
             end_layer=assignment.end_layer,
             total_layers=self.total_layers,
-            dtype="float16",
         )
         self.local_shard = ShardLoader(config, device=self.device).load()
 

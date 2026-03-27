@@ -75,7 +75,6 @@ def test_llama_two_shard_pipeline():
         start_layer=0,
         end_layer=8,
         total_layers=16,
-        dtype="float16",
     )
     shard2_cfg = ShardConfig(
         model_id=model_id,
@@ -83,7 +82,6 @@ def test_llama_two_shard_pipeline():
         start_layer=8,
         end_layer=16,
         total_layers=16,
-        dtype="float16",
     )
 
     shard1 = ShardLoader(shard1_cfg, device="cpu").load()
@@ -107,7 +105,6 @@ def test_llama_first_shard_loads():
         start_layer=0,
         end_layer=8,
         total_layers=16,
-        dtype="float16",
     )
     shard = ShardLoader(cfg, device="cpu").load()
 
@@ -128,7 +125,6 @@ def test_llama_last_shard_loads():
         start_layer=8,
         end_layer=16,
         total_layers=16,
-        dtype="float16",
     )
     shard = ShardLoader(cfg, device="cpu").load()
 

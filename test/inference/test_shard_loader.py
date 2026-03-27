@@ -13,7 +13,6 @@ def small_qwen_first_shard():
         start_layer=0,
         end_layer=12,
         total_layers=24,
-        dtype="float16",
     )
 
 
@@ -26,7 +25,6 @@ def small_qwen_last_shard():
         start_layer=12,
         end_layer=24,
         total_layers=24,
-        dtype="float16",
     )
 
 
@@ -66,7 +64,6 @@ def test_forward_first_shard(small_qwen_first_shard):
     # hidden_states shape: [batch, seq_len, hidden_size]
     assert hidden.shape[0] == 1
     assert hidden.shape[1] == 3
-    # Qwen2.5-0.5B uses bfloat16 internally
     assert hidden.dtype == torch.bfloat16
 
 
@@ -92,27 +89,30 @@ def test_qwen_output_matches_reference():
     from transformers import AutoModelForCausalLM
 
     model_id = "Qwen/Qwen2.5-0.5B-Instruct"
+    target_dtype = torch.float32
 
-    ref_model = AutoModelForCausalLM.from_pretrained(model_id, dtype=torch.bfloat16).to(
-        "cpu"
-    )
+    ref_model = AutoModelForCausalLM.from_pretrained(
+        model_id,
+        torch_dtype=target_dtype,
+        trust_remote_code=True,
+    ).to("cpu")
     input_ids = torch.tensor([[1, 2, 3]], dtype=torch.long)
     with torch.no_grad():
         ref_logits = ref_model(input_ids).logits
 
     s1 = ShardLoader(
-        ShardConfig(model_id, ModelFamily.QWEN, 0, 12, 24, "float16"), "cpu"
+        ShardConfig(model_id, ModelFamily.QWEN, 0, 12, 24, "float32"), "cpu"
     ).load()
     s2 = ShardLoader(
-        ShardConfig(model_id, ModelFamily.QWEN, 12, 24, 24, "float16"), "cpu"
+        ShardConfig(model_id, ModelFamily.QWEN, 12, 24, 24, "float32"), "cpu"
     ).load()
 
     with torch.no_grad():
         h, _ = s1.forward(input_ids)
         dist_logits, _ = s2.forward(h)
 
-    # Allow small tolerance for bfloat16 vs reference precision
-    print(ref_logits.dtype, h.dtype, dist_logits.dtype)
+    assert h.dtype == target_dtype
+    assert dist_logits.dtype == target_dtype
     assert torch.allclose(ref_logits, dist_logits, atol=1e-2)
 
 

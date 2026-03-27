@@ -129,6 +129,14 @@ NodeState -> PlacementPlan -> ReconfigurationPlan -> ShardRecord
 
 这就是当前 inference 子系统的主数据流。
 
+`ShardConfig.dtype` 现在已经进入真实加载链路，但语义是“**config 优先，未指定时保留原生权重 dtype**”。也就是说，`ShardLoader` 会先检查 `ShardConfig.dtype`；如果它是：
+
+- `float16`
+- `bfloat16`
+- `float32`
+
+那么 shell 创建和 layer / embed / norm / lm_head materialize 都会显式收敛到这个 dtype；如果 `dtype=None`，则会从实际加载到的 safetensors tensor 推断 native dtype，并沿用它，而不是再强制 cast 到某个固定默认值。
+
 ### 2. 给算法协作者的入口：哪些函数是真正可替换点
 
 算法协作者最应该关心的不是 runtime 细节，而是下面这些入口：

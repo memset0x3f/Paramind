@@ -2,7 +2,10 @@ from scripts.cluster_planner_demo import ClusterDemoSession
 
 
 def _assignment_pairs(plan):
-    return [(assignment.start_layer, assignment.end_layer) for assignment in plan.assignments]
+    return [
+        (assignment.start_layer, assignment.end_layer)
+        for assignment in plan.assignments
+    ]
 
 
 def test_initial_render_has_empty_node_states_before_start():
@@ -40,7 +43,10 @@ def test_join_adds_node_and_updates_loaded_state_from_new_plan():
 
     assert "node-d | active=yes" in rendered
     assert session.current_plan is not None
-    assert any(assignment.node_id == "node-d" for assignment in session.current_plan.assignments)
+    assert any(
+        assignment.node_id == "node-d"
+        for assignment in session.current_plan.assignments
+    )
     node_d_ranges = [
         (assignment.start_layer, assignment.end_layer)
         for assignment in session.current_plan.assignments

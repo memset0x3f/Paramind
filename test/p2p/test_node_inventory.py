@@ -50,8 +50,7 @@ def test_effective_capacity_prefers_explicit_block_capacity():
 def test_read_linux_meminfo_kb_parses_total_and_available(tmp_path):
     meminfo = tmp_path / "meminfo"
     meminfo.write_text(
-        "MemTotal:       8000000 kB\n"
-        "MemAvailable:   4000000 kB\n",
+        "MemTotal:       8000000 kB\n" "MemAvailable:   4000000 kB\n",
         encoding="utf-8",
     )
     total_kb, avail_kb = _read_linux_meminfo_kb(str(meminfo))
@@ -62,8 +61,7 @@ def test_read_linux_meminfo_kb_parses_total_and_available(tmp_path):
 def test_read_linux_meminfo_kb_falls_back_to_memfree(tmp_path):
     meminfo = tmp_path / "meminfo"
     meminfo.write_text(
-        "MemTotal:       8000000 kB\n"
-        "MemFree:        1000000 kB\n",
+        "MemTotal:       8000000 kB\n" "MemFree:        1000000 kB\n",
         encoding="utf-8",
     )
     total_kb, avail_kb = _read_linux_meminfo_kb(str(meminfo))
@@ -74,8 +72,7 @@ def test_read_linux_meminfo_kb_falls_back_to_memfree(tmp_path):
 def test_read_linux_meminfo_kb_order_independent(tmp_path):
     meminfo = tmp_path / "meminfo"
     meminfo.write_text(
-        "MemAvailable:   4000000 kB\n"
-        "MemTotal:       8000000 kB\n",
+        "MemAvailable:   4000000 kB\n" "MemTotal:       8000000 kB\n",
         encoding="utf-8",
     )
     total_kb, free_kb = _read_linux_meminfo_kb(str(meminfo))
@@ -114,8 +111,7 @@ def test_parse_darwin_vm_stat_accepts_page_size_after_pages():
 
 def test_parse_darwin_vm_stat_accepts_alternate_page_size_line():
     vm_stat = (
-        "Page size: 4096 bytes\n"
-        "Pages free:                               10.\n"
+        "Page size: 4096 bytes\n" "Pages free:                               10.\n"
     )
 
     page_size, available_pages = _parse_darwin_vm_stat(vm_stat)
@@ -124,7 +120,9 @@ def test_parse_darwin_vm_stat_accepts_alternate_page_size_line():
     assert available_pages == 10
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="GlobalMemoryStatusEx only on Windows")
+@pytest.mark.skipif(
+    sys.platform != "win32", reason="GlobalMemoryStatusEx only on Windows"
+)
 def test_detect_windows_memory_gb_reports_physical_ram():
     total_gb, free_gb = _detect_windows_memory_gb()
     assert total_gb > 0.0
@@ -133,8 +131,12 @@ def test_detect_windows_memory_gb_reports_physical_ram():
 
 def test_build_node_state_cpu_snapshot_can_report_positive_capacity(monkeypatch):
     monkeypatch.setattr("inference.NodeInventory._detect_device_type", lambda: "cpu")
-    monkeypatch.setattr("inference.NodeInventory._detect_memory_gb", lambda: (36.0, 15.5))
-    monkeypatch.setattr("inference.NodeInventory.benchmark_block_speed", lambda device_type: 8.0)
+    monkeypatch.setattr(
+        "inference.NodeInventory._detect_memory_gb", lambda: (36.0, 15.5)
+    )
+    monkeypatch.setattr(
+        "inference.NodeInventory.benchmark_block_speed", lambda device_type: 8.0
+    )
 
     node = build_node_state(
         node_id="cpu-node",
@@ -150,8 +152,12 @@ def test_build_node_state_cpu_snapshot_can_report_positive_capacity(monkeypatch)
 
 def test_build_node_state_uses_snapshot_and_benchmark(monkeypatch):
     monkeypatch.setattr("inference.NodeInventory._detect_device_type", lambda: "cuda")
-    monkeypatch.setattr("inference.NodeInventory._detect_memory_gb", lambda: (64.0, 48.0))
-    monkeypatch.setattr("inference.NodeInventory.benchmark_block_speed", lambda device_type: 80.0)
+    monkeypatch.setattr(
+        "inference.NodeInventory._detect_memory_gb", lambda: (64.0, 48.0)
+    )
+    monkeypatch.setattr(
+        "inference.NodeInventory.benchmark_block_speed", lambda device_type: 80.0
+    )
 
     node = build_node_state(
         node_id="node-a",

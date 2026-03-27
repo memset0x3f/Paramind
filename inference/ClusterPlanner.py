@@ -3,7 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 
-from inference.ClusterTypes import NodeReconfigurationAction, PlacementPlan, ShardAssignment
+from inference.ClusterTypes import (
+    NodeReconfigurationAction,
+    PlacementPlan,
+    ShardAssignment,
+)
 from inference.NodeInventory import NodeState, normalize_node_state
 
 FIRST_LAST_ROLE_PENALTY = 1.0
@@ -22,7 +26,9 @@ class _PlanScore:
     total: float
 
 
-def _layer_work(total_layers: int, layer_work: list[float] | None = None) -> list[float]:
+def _layer_work(
+    total_layers: int, layer_work: list[float] | None = None
+) -> list[float]:
     if layer_work is None:
         return [1.0] * total_layers
     if len(layer_work) != total_layers:
@@ -90,14 +96,18 @@ def coordinator_score(
     )
 
 
-def choose_coordinator(nodes, total_layers: int | None = None, current_plan: PlacementPlan | None = None) -> str:
+def choose_coordinator(
+    nodes, total_layers: int | None = None, current_plan: PlacementPlan | None = None
+) -> str:
     normalized_nodes = [normalize_node_state(node) for node in nodes]
     if not normalized_nodes:
         raise ValueError("At least one node profile is required")
     effective_total_layers = total_layers
     if effective_total_layers is None:
         if current_plan is not None and current_plan.assignments:
-            effective_total_layers = max(assignment.end_layer for assignment in current_plan.assignments)
+            effective_total_layers = max(
+                assignment.end_layer for assignment in current_plan.assignments
+            )
         else:
             effective_total_layers = max(len(normalized_nodes), 1)
     return min(
@@ -109,7 +119,6 @@ def choose_coordinator(nodes, total_layers: int | None = None, current_plan: Pla
             current_plan=current_plan,
         ),
     ).node_id
-
 
 
 def score_assignment_move_cost(
@@ -140,7 +149,9 @@ def estimate_assignment_cost(
     return load_penalty + role_cost + bandwidth_cost + compute_bias + device_bonus
 
 
-def _arrange_nodes_for_pipeline(nodes: list[NodeState], total_layers: int) -> list[NodeState]:
+def _arrange_nodes_for_pipeline(
+    nodes: list[NodeState], total_layers: int
+) -> list[NodeState]:
     if not nodes:
         return []
     reference_width = estimate_reference_stage_width(total_layers, len(nodes))
@@ -201,7 +212,9 @@ def _build_assignments(
     return PlacementPlan(
         model_id=model_id,
         assignments=assignments,
-        coordinator_id=choose_coordinator(ordered_nodes, total_layers=boundaries[-1], current_plan=temp_plan),
+        coordinator_id=choose_coordinator(
+            ordered_nodes, total_layers=boundaries[-1], current_plan=temp_plan
+        ),
     )
 
 
@@ -244,8 +257,12 @@ def _solve_cold_start_dp(
 
     node_count = len(ordered_nodes)
     inf_score = _PlanScore(math.inf, math.inf, math.inf)
-    dp: list[list[_PlanScore]] = [[inf_score for _ in range(total_layers + 1)] for _ in range(node_count + 1)]
-    prev: list[list[int | None]] = [[None for _ in range(total_layers + 1)] for _ in range(node_count + 1)]
+    dp: list[list[_PlanScore]] = [
+        [inf_score for _ in range(total_layers + 1)] for _ in range(node_count + 1)
+    ]
+    prev: list[list[int | None]] = [
+        [None for _ in range(total_layers + 1)] for _ in range(node_count + 1)
+    ]
     dp[0][0] = _PlanScore(0.0, 0.0, 0.0)
 
     for i in range(1, node_count + 1):
@@ -307,9 +324,15 @@ def plan_static_distribution(
     layer_work: list[float] | None = None,
 ) -> PlacementPlan:
     normalized_nodes = [normalize_node_state(node) for node in nodes]
-    active_nodes = [node for node in normalized_nodes if node.online and node.effective_capacity_blocks() > 0]
+    active_nodes = [
+        node
+        for node in normalized_nodes
+        if node.online and node.effective_capacity_blocks() > 0
+    ]
     if not active_nodes:
-        raise ValueError("At least one online node with positive capacity is required for planning")
+        raise ValueError(
+            "At least one online node with positive capacity is required for planning"
+        )
 
     layer_work = _layer_work(total_layers, layer_work)
     total_capacity = sum(node.effective_capacity_blocks() for node in active_nodes)
@@ -347,7 +370,9 @@ def _owner_by_layer(current: PlacementPlan, total_layers: int) -> list[str | Non
     return owners
 
 
-def _dominant_owner(owner_by_layer: list[str | None], start: int, end: int) -> str | None:
+def _dominant_owner(
+    owner_by_layer: list[str | None], start: int, end: int
+) -> str | None:
     counts: dict[str, int] = {}
     for owner in owner_by_layer[start:end]:
         if owner is None:
@@ -366,8 +391,12 @@ def diff_assignment_changes(
     current: PlacementPlan,
     new: PlacementPlan,
 ) -> dict[str, list[NodeReconfigurationAction]]:
-    current_by_key = {_assignment_key(assignment): assignment for assignment in current.assignments}
-    new_by_key = {_assignment_key(assignment): assignment for assignment in new.assignments}
+    current_by_key = {
+        _assignment_key(assignment): assignment for assignment in current.assignments
+    }
+    new_by_key = {
+        _assignment_key(assignment): assignment for assignment in new.assignments
+    }
     actions: dict[str, list[NodeReconfigurationAction]] = {}
 
     for key, assignment in new_by_key.items():
@@ -410,7 +439,9 @@ def diff_assignment_changes(
             )
 
     for node_id, node_actions in actions.items():
-        node_actions.sort(key=lambda item: (item.start_layer, item.end_layer, item.action))
+        node_actions.sort(
+            key=lambda item: (item.start_layer, item.end_layer, item.action)
+        )
     return actions
 
 
@@ -432,7 +463,9 @@ def _estimate_migration_cost(
     changed = dominant_owner is not None and dominant_owner != node.node_id
     migration_cost = MIGRATION_FIXED_PENALTY * float(changed)
     migration_cost += MIGRATION_SIZE_PENALTY * sum(
-        1 for owner in owner_by_layer[start:end] if owner is not None and owner != node.node_id
+        1
+        for owner in owner_by_layer[start:end]
+        if owner is not None and owner != node.node_id
     )
     if not _range_loaded(node, start, end):
         migration_cost += PRELOAD_MISS_PENALTY
@@ -450,12 +483,18 @@ def _solve_replan_dp(
     for value in layer_work:
         prefix.append(prefix[-1] + value)
 
-    current_boundaries = [assignment.end_layer for assignment in current.assignments[:-1]]
+    current_boundaries = [
+        assignment.end_layer for assignment in current.assignments[:-1]
+    ]
     owner_by_layer = _owner_by_layer(current, total_layers)
     node_count = len(ordered_nodes)
     inf_score = _PlanScore(math.inf, math.inf, math.inf)
-    dp: list[list[_PlanScore]] = [[inf_score for _ in range(total_layers + 1)] for _ in range(node_count + 1)]
-    prev: list[list[int | None]] = [[None for _ in range(total_layers + 1)] for _ in range(node_count + 1)]
+    dp: list[list[_PlanScore]] = [
+        [inf_score for _ in range(total_layers + 1)] for _ in range(node_count + 1)
+    ]
+    prev: list[list[int | None]] = [
+        [None for _ in range(total_layers + 1)] for _ in range(node_count + 1)
+    ]
     dp[0][0] = _PlanScore(0.0, 0.0, 0.0)
 
     for i in range(1, node_count + 1):
@@ -478,7 +517,9 @@ def _solve_replan_dp(
                 )
                 if math.isinf(stage_cost):
                     continue
-                migration_cost = _estimate_migration_cost(node, start, end, owner_by_layer)
+                migration_cost = _estimate_migration_cost(
+                    node, start, end, owner_by_layer
+                )
                 target_boundary = (
                     current_boundaries[i - 1]
                     if i - 1 < len(current_boundaries)
@@ -515,8 +556,12 @@ def _solve_replan_dp(
         owner_by_layer = _owner_by_layer(current, total_layers)
         assignments: list[ShardAssignment] = []
         for assignment in base_plan.assignments:
-            dominant_owner = _dominant_owner(owner_by_layer, assignment.start_layer, assignment.end_layer)
-            source_node_id = None if dominant_owner == assignment.node_id else dominant_owner
+            dominant_owner = _dominant_owner(
+                owner_by_layer, assignment.start_layer, assignment.end_layer
+            )
+            source_node_id = (
+                None if dominant_owner == assignment.node_id else dominant_owner
+            )
             assignments.append(
                 ShardAssignment(
                     node_id=assignment.node_id,
@@ -554,16 +599,27 @@ def replan_distribution(
     layer_work: list[float] | None = None,
 ) -> PlacementPlan:
     normalized_nodes = [normalize_node_state(node) for node in nodes]
-    active_nodes = [node for node in normalized_nodes if node.online and node.effective_capacity_blocks() > 0]
+    active_nodes = [
+        node
+        for node in normalized_nodes
+        if node.online and node.effective_capacity_blocks() > 0
+    ]
     if not active_nodes:
-        raise ValueError("At least one online node with positive capacity is required for replanning")
+        raise ValueError(
+            "At least one online node with positive capacity is required for replanning"
+        )
 
     node_by_id = {node.node_id: node for node in active_nodes}
     current_node_ids = {assignment.node_id for assignment in current.assignments}
     active_node_ids = set(node_by_id.keys())
-    if current.assignments and all(
-        _assignment_can_stay(assignment, node_by_id) for assignment in current.assignments
-    ) and current_node_ids == active_node_ids:
+    if (
+        current.assignments
+        and all(
+            _assignment_can_stay(assignment, node_by_id)
+            for assignment in current.assignments
+        )
+        and current_node_ids == active_node_ids
+    ):
         return current
 
     layer_work = _layer_work(total_layers, layer_work)
@@ -572,7 +628,9 @@ def replan_distribution(
         raise ValueError("Insufficient cluster capacity for total layers")
 
     ordered_nodes = _arrange_nodes_for_pipeline(active_nodes, total_layers=total_layers)
-    solved = _solve_replan_dp(current.model_id, total_layers, ordered_nodes, layer_work, current)
+    solved = _solve_replan_dp(
+        current.model_id, total_layers, ordered_nodes, layer_work, current
+    )
     if solved is None:
         raise ValueError("No feasible replan found for the current nodes")
     return solved[1]

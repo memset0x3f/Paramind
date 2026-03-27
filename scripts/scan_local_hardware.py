@@ -40,9 +40,15 @@ def render_json(node: NodeState) -> str:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Scan local hardware into a NodeState-style report.")
-    parser.add_argument("--json", action="store_true", help="Render machine-readable JSON output.")
-    parser.add_argument("--node-id", default=socket.gethostname(), help="Override node id.")
+    parser = argparse.ArgumentParser(
+        description="Scan local hardware into a NodeState-style report."
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="Render machine-readable JSON output."
+    )
+    parser.add_argument(
+        "--node-id", default=socket.gethostname(), help="Override node id."
+    )
     parser.add_argument("--host", default=None, help="Override host value.")
     return parser
 

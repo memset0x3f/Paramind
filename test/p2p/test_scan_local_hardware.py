@@ -21,7 +21,9 @@ def test_text_render_includes_key_metrics(monkeypatch):
         ),
     )
 
-    rendered = scan_local_hardware.render_text(scan_local_hardware.scan_local_node("node-a"))
+    rendered = scan_local_hardware.render_text(
+        scan_local_hardware.scan_local_node("node-a")
+    )
 
     assert "node_id=node-a" in rendered
     assert "device_type=cuda" in rendered
@@ -46,7 +48,9 @@ def test_json_mode_returns_parseable_required_fields(monkeypatch):
         ),
     )
 
-    payload = scan_local_hardware.render_json(scan_local_hardware.scan_local_node("node-b"))
+    payload = scan_local_hardware.render_json(
+        scan_local_hardware.scan_local_node("node-b")
+    )
     data = json.loads(payload)
 
     assert data["node_id"] == "node-b"

@@ -18,7 +18,9 @@ def test_llama_registry():
     assert info.norm_key == "model.norm"
     assert info.lm_head_key == "lm_head"
     assert info.layer_prefix == "model.layers"
-    assert info.rotary_key is None  # Llama uses RoPE inside attention, no separate module
+    assert (
+        info.rotary_key is None
+    )  # Llama uses RoPE inside attention, no separate module
 
 
 def test_layer_key_pattern():

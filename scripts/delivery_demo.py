@@ -13,8 +13,12 @@ if str(REPO_ROOT) not in sys.path:
 from scripts import cluster_planner_demo, local_demo, runtime_lifecycle_demo
 from scripts.demo_rendering import render_key_value_block, render_table
 
-
-SCRIPTED_PLANNER_COMMANDS = ["start node-a,node-b,node-c", "join node-d", "show", "quit"]
+SCRIPTED_PLANNER_COMMANDS = [
+    "start node-a,node-b,node-c",
+    "join node-d",
+    "show",
+    "quit",
+]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -25,27 +29,47 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("overview", help="Show the delivery demo overview.")
 
-    local_parser = subparsers.add_parser("local", help="Run the local/distributed-sim demo.")
-    local_parser.add_argument("--mode", choices=["local", "distributed-sim", "both"], default="both")
+    local_parser = subparsers.add_parser(
+        "local", help="Run the local/distributed-sim demo."
+    )
+    local_parser.add_argument(
+        "--mode", choices=["local", "distributed-sim", "both"], default="both"
+    )
     local_parser.add_argument("--model-id", default="Qwen/Qwen2.5-0.5B-Instruct")
-    local_parser.add_argument("--family", type=local_demo._parse_family, default=local_demo.ModelFamily.QWEN)
+    local_parser.add_argument(
+        "--family", type=local_demo._parse_family, default=local_demo.ModelFamily.QWEN
+    )
     local_parser.add_argument("--device", default="cpu")
     local_parser.add_argument("--prompt", default="用一句话介绍你自己。")
     local_parser.add_argument("--max-tokens", type=int, default=8)
     local_parser.add_argument("--temperature", type=float, default=0.0)
     local_parser.add_argument("--num-shards", type=int, default=2)
 
-    planner_parser = subparsers.add_parser("planner", help="Run the cluster planner demo.")
-    planner_parser.add_argument("--scripted", action="store_true", help="Run a fixed scripted planner walkthrough.")
+    planner_parser = subparsers.add_parser(
+        "planner", help="Run the cluster planner demo."
+    )
+    planner_parser.add_argument(
+        "--scripted",
+        action="store_true",
+        help="Run a fixed scripted planner walkthrough.",
+    )
 
     subparsers.add_parser("lifecycle", help="Run the runtime lifecycle demo.")
 
-    status_parser = subparsers.add_parser("status", help="Show a stable runtime/coordinator status snapshot.")
-    status_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    status_parser = subparsers.add_parser(
+        "status", help="Show a stable runtime/coordinator status snapshot."
+    )
+    status_parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON."
+    )
 
-    all_parser = subparsers.add_parser("all", help="Run the recommended delivery walkthrough.")
+    all_parser = subparsers.add_parser(
+        "all", help="Run the recommended delivery walkthrough."
+    )
     all_parser.add_argument("--model-id", default="Qwen/Qwen2.5-0.5B-Instruct")
-    all_parser.add_argument("--family", type=local_demo._parse_family, default=local_demo.ModelFamily.QWEN)
+    all_parser.add_argument(
+        "--family", type=local_demo._parse_family, default=local_demo.ModelFamily.QWEN
+    )
     all_parser.add_argument("--device", default="cpu")
     all_parser.add_argument("--prompt", default="用一句话介绍你自己。")
     all_parser.add_argument("--max-tokens", type=int, default=8)
@@ -105,12 +129,21 @@ def render_status_text(state: dict) -> str:
                     "reconfiguration_id": coordinator["reconfiguration_id"],
                     "ready_nodes": coordinator["ready_nodes"],
                     "reconfig_ready_nodes": coordinator["reconfig_ready_nodes"],
-                    "reconfiguration_committed": coordinator["reconfiguration_committed"],
+                    "reconfiguration_committed": coordinator[
+                        "reconfiguration_committed"
+                    ],
                 },
             ),
             render_table(
                 "SHARD STATES",
-                columns=["node", "shard", "state", "active_owner", "pending_unload", "inflight_requests"],
+                columns=[
+                    "node",
+                    "shard",
+                    "state",
+                    "active_owner",
+                    "pending_unload",
+                    "inflight_requests",
+                ],
                 rows=rows,
             ),
         ]
@@ -139,7 +172,9 @@ def run_local_command(args) -> str:
 
 def run_planner_command(scripted: bool) -> str:
     if scripted:
-        return cluster_planner_demo.run_scripted_demo(SCRIPTED_PLANNER_COMMANDS, include_guide=True)
+        return cluster_planner_demo.run_scripted_demo(
+            SCRIPTED_PLANNER_COMMANDS, include_guide=True
+        )
     return cluster_planner_demo.ClusterDemoSession().render_current(include_guide=True)
 
 

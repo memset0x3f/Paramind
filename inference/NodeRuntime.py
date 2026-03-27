@@ -30,16 +30,24 @@ class NodeRuntime:
         self.local_shard = None
         self.registry = ShardRegistry()
 
-    def attach_transport(self, transport, on_ready: Optional[Callable[[str], Any]] = None):
+    def attach_transport(
+        self, transport, on_ready: Optional[Callable[[str], Any]] = None
+    ):
         self.transport = transport
         if on_ready is not None:
             self.on_ready = on_ready
 
         if hasattr(transport, "register_handler"):
             transport.register_handler("cluster_plan", self.handle_cluster_plan)
-            transport.register_handler("cluster_reconfigure", self.handle_reconfiguration_plan)
-            transport.register_handler("cluster_reconfigure_prepare", self.handle_reconfiguration_prepare)
-            transport.register_handler("cluster_reconfigure_commit", self.handle_reconfiguration_commit)
+            transport.register_handler(
+                "cluster_reconfigure", self.handle_reconfiguration_plan
+            )
+            transport.register_handler(
+                "cluster_reconfigure_prepare", self.handle_reconfiguration_prepare
+            )
+            transport.register_handler(
+                "cluster_reconfigure_commit", self.handle_reconfiguration_commit
+            )
         return transport
 
     def _select_assignment(self, payload: dict) -> ShardAssignment | None:
@@ -80,7 +88,9 @@ class NodeRuntime:
         actions = self.handle_reconfiguration_plan(payload)
         if not actions:
             return []
-        result = self.prepare_reconfiguration(model_id=payload["model_id"], actions=actions)
+        result = self.prepare_reconfiguration(
+            model_id=payload["model_id"], actions=actions
+        )
         self.signal_ready()
         return result
 
@@ -123,7 +133,9 @@ class NodeRuntime:
     def load_assignment(self, model_id: str, assignment: ShardAssignment):
         self.apply_assignment(model_id, assignment)
 
-    def prepare_reconfiguration(self, model_id: str, actions: list[NodeReconfigurationAction]):
+    def prepare_reconfiguration(
+        self, model_id: str, actions: list[NodeReconfigurationAction]
+    ):
         results = []
         for action in actions:
             shard_key = (action.start_layer, action.end_layer)
@@ -131,7 +143,9 @@ class NodeRuntime:
                 record = self.registry.get(shard_key)
                 if record is None:
                     raise RuntimeError(f"Missing shard for keep: {shard_key}")
-                results.append({"shard_key": shard_key, "status": "ready", "action": "keep"})
+                results.append(
+                    {"shard_key": shard_key, "status": "ready", "action": "keep"}
+                )
                 continue
 
             if action.action in {"load", "move_in"}:
@@ -162,14 +176,18 @@ class NodeRuntime:
                         last_prepare_ts=time.time(),
                     )
                 )
-                results.append({"shard_key": shard_key, "status": "ready", "action": action.action})
+                results.append(
+                    {"shard_key": shard_key, "status": "ready", "action": action.action}
+                )
                 continue
 
             if action.action == "unload":
                 record = self.registry.get(shard_key)
                 if record is not None:
                     record.pending_unload = True
-                results.append({"shard_key": shard_key, "status": "deferred", "action": "unload"})
+                results.append(
+                    {"shard_key": shard_key, "status": "deferred", "action": "unload"}
+                )
         return results
 
     def commit_reconfiguration(self, actions: list[NodeReconfigurationAction]):
@@ -193,7 +211,11 @@ class NodeRuntime:
                     )
                 )
                 continue
-            if action.action == "unload" and record is not None and record.pending_unload:
+            if (
+                action.action == "unload"
+                and record is not None
+                and record.pending_unload
+            ):
                 if record.inflight_requests > 0:
                     self.registry.put(
                         ShardRecord(
@@ -254,7 +276,11 @@ class NodeRuntime:
         record = self.registry.get(shard_key)
         if record is None:
             return
-        if record.state == "draining" and record.pending_unload and record.inflight_requests == 0:
+        if (
+            record.state == "draining"
+            and record.pending_unload
+            and record.inflight_requests == 0
+        ):
             self.registry.remove(shard_key)
 
     def debug_snapshot(self) -> dict:
@@ -268,7 +294,9 @@ class NodeRuntime:
                 "source_node_id": self.assignment.source_node_id,
             }
         shards = []
-        for record in sorted(self.registry.all_records(), key=lambda item: item.shard_key):
+        for record in sorted(
+            self.registry.all_records(), key=lambda item: item.shard_key
+        ):
             shards.append(
                 {
                     "shard_key": record.shard_key,

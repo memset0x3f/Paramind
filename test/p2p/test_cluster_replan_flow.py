@@ -27,7 +27,11 @@ def test_reconfiguration_plan_groups_actions_by_node():
         coordinator_id="node-a",
         actions_by_node={
             "node-a": [NodeReconfigurationAction("node-a", "unload", 0, 12)],
-            "node-c": [NodeReconfigurationAction("node-c", "move_in", 0, 12, from_node_id="node-a")],
+            "node-c": [
+                NodeReconfigurationAction(
+                    "node-c", "move_in", 0, 12, from_node_id="node-a"
+                )
+            ],
         },
     )
 
@@ -110,7 +114,10 @@ def test_coordinator_builds_reconfiguration_plan_after_replan():
     assert isinstance(reconfig, ReconfigurationPlan)
     assert reconfig.model_id == coordinator.model_id
     assert "node-c" in reconfig.actions_by_node
-    assert any(action.action in {"move_in", "load"} for action in reconfig.actions_by_node["node-c"])
+    assert any(
+        action.action in {"move_in", "load"}
+        for action in reconfig.actions_by_node["node-c"]
+    )
 
 
 def test_join_reconfiguration_exposes_move_or_load_actions_for_new_node():
@@ -131,7 +138,10 @@ def test_join_reconfiguration_exposes_move_or_load_actions_for_new_node():
 
     reconfig = coordinator.build_reconfiguration(expanded_profiles)
 
-    assert any(action.action in {"move_in", "load"} for action in reconfig.actions_by_node["node-c"])
+    assert any(
+        action.action in {"move_in", "load"}
+        for action in reconfig.actions_by_node["node-c"]
+    )
 
 
 def test_leave_reconfiguration_exposes_unload_for_departing_owner():
@@ -153,7 +163,9 @@ def test_leave_reconfiguration_exposes_unload_for_departing_owner():
     reconfig = coordinator.build_reconfiguration(remaining_profiles)
 
     assert "node-b" in reconfig.actions_by_node
-    assert any(action.action == "unload" for action in reconfig.actions_by_node["node-b"])
+    assert any(
+        action.action == "unload" for action in reconfig.actions_by_node["node-b"]
+    )
 
 
 def test_diff_assignment_changes_is_exported():
@@ -163,7 +175,10 @@ def test_diff_assignment_changes_is_exported():
 
 
 def _assert_contiguous_cover(plan, total_layers):
-    pairs = [(assignment.start_layer, assignment.end_layer) for assignment in plan.assignments]
+    pairs = [
+        (assignment.start_layer, assignment.end_layer)
+        for assignment in plan.assignments
+    ]
     assert pairs[0][0] == 0
     assert pairs[-1][1] == total_layers
     for left, right in zip(pairs, pairs[1:]):
@@ -192,7 +207,9 @@ def test_coordinator_can_replan_from_current_plan_when_profiles_change():
     _assert_contiguous_cover(new_plan, 24)
     assert new_plan is not old_plan
     assert new_plan.assignments[0].node_id == "node-b"
-    assert any(assignment.source_node_id == "node-a" for assignment in new_plan.assignments)
+    assert any(
+        assignment.source_node_id == "node-a" for assignment in new_plan.assignments
+    )
 
 
 def test_coordinator_replan_keeps_current_plan_when_shards_still_fit():
@@ -255,4 +272,6 @@ def test_coordinator_replan_rebalances_when_a_stronger_node_joins():
 
     assert new_plan is not current
     assert any(assignment.node_id == "node-c" for assignment in new_plan.assignments)
-    assert any(assignment.source_node_id is not None for assignment in new_plan.assignments)
+    assert any(
+        assignment.source_node_id is not None for assignment in new_plan.assignments
+    )

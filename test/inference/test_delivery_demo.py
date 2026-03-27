@@ -29,7 +29,15 @@ class _FakeLocalEngine:
 
 
 class _FakeDistributedEngine:
-    def __init__(self, model_id, family, shard_configs, device="cpu", local_shard_index=None, p2p_client=None):
+    def __init__(
+        self,
+        model_id,
+        family,
+        shard_configs,
+        device="cpu",
+        local_shard_index=None,
+        p2p_client=None,
+    ):
         self.model_id = model_id
         self.family = family
         self.shard_configs = shard_configs
@@ -98,7 +106,9 @@ def test_all_runs_delivery_steps_in_stable_order(monkeypatch, capsys):
     local_demo = importlib.import_module("scripts.local_demo")
 
     monkeypatch.setattr(local_demo, "LocalInferenceEngine", _FakeLocalEngine)
-    monkeypatch.setattr(local_demo, "DistributedInferenceEngine", _FakeDistributedEngine)
+    monkeypatch.setattr(
+        local_demo, "DistributedInferenceEngine", _FakeDistributedEngine
+    )
 
     exit_code = delivery_demo.main(["all"])
     output = capsys.readouterr().out

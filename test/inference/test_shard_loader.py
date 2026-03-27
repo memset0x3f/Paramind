@@ -145,21 +145,25 @@ def test_model_shard_forward_passes_cache_with_current_transformers_kwarg_names(
         ):
             self.calls.append(
                 {
-                    'past_key_values': past_key_values,
-                    'cache_position': cache_position.clone() if cache_position is not None else None,
-                    'position_ids': position_ids.clone() if position_ids is not None else None,
-                    'unexpected_kwargs': dict(kwargs),
+                    "past_key_values": past_key_values,
+                    "cache_position": (
+                        cache_position.clone() if cache_position is not None else None
+                    ),
+                    "position_ids": (
+                        position_ids.clone() if position_ids is not None else None
+                    ),
+                    "unexpected_kwargs": dict(kwargs),
                 }
             )
             return (hidden_states,)
 
     cfg = ShardConfig(
-        model_id='Qwen/Qwen2.5-0.5B-Instruct',
+        model_id="Qwen/Qwen2.5-0.5B-Instruct",
         family=ModelFamily.QWEN,
         start_layer=0,
         end_layer=1,
         total_layers=1,
-        dtype='float16',
+        dtype="float16",
     )
     layer = FakeLayer()
     shard = ModelShard(
@@ -177,7 +181,7 @@ def test_model_shard_forward_passes_cache_with_current_transformers_kwarg_names(
     shard.forward(x, past_key_values=cache)
 
     assert len(layer.calls) == 1
-    assert layer.calls[0]['past_key_values'] is cache
-    assert layer.calls[0]['unexpected_kwargs'] == {}
-    assert layer.calls[0]['position_ids'].tolist() == [[5]]
-    assert layer.calls[0]['cache_position'].tolist() == [5]
+    assert layer.calls[0]["past_key_values"] is cache
+    assert layer.calls[0]["unexpected_kwargs"] == {}
+    assert layer.calls[0]["position_ids"].tolist() == [[5]]
+    assert layer.calls[0]["cache_position"].tolist() == [5]

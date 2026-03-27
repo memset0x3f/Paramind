@@ -1,4 +1,8 @@
-from inference.ClusterTypes import NodeReconfigurationAction, ReconfigurationPlan, ShardAssignment
+from inference.ClusterTypes import (
+    NodeReconfigurationAction,
+    ReconfigurationPlan,
+    ShardAssignment,
+)
 from inference.NodeRuntime import NodeRuntime
 from inference.ShardConfig import ModelFamily
 from inference.ShardRegistry import ShardRecord, ShardRegistry
@@ -57,7 +61,9 @@ def test_shard_record_defaults_include_inflight_and_timestamps():
 def test_registry_replace_updates_existing_record_for_same_shard_key():
     registry = ShardRegistry()
     registry.put(ShardRecord((0, 12), role="first", state="ready", inflight_requests=0))
-    registry.put(ShardRecord((0, 12), role="first", state="serving", inflight_requests=2))
+    registry.put(
+        ShardRecord((0, 12), role="first", state="serving", inflight_requests=2)
+    )
 
     record = registry.get((0, 12))
     assert record is not None
@@ -67,7 +73,9 @@ def test_registry_replace_updates_existing_record_for_same_shard_key():
 
 def test_prepare_load_transitions_absent_to_ready_and_stores_shard():
     loader = FakeLoader()
-    runtime = NodeRuntime(node_id="node-a", family=ModelFamily.QWEN, total_layers=24, loader=loader)
+    runtime = NodeRuntime(
+        node_id="node-a", family=ModelFamily.QWEN, total_layers=24, loader=loader
+    )
 
     actions = [
         NodeReconfigurationAction(
@@ -79,7 +87,9 @@ def test_prepare_load_transitions_absent_to_ready_and_stores_shard():
         )
     ]
 
-    result = runtime.prepare_reconfiguration(model_id="Qwen/Qwen2.5-0.5B-Instruct", actions=actions)
+    result = runtime.prepare_reconfiguration(
+        model_id="Qwen/Qwen2.5-0.5B-Instruct", actions=actions
+    )
 
     record = runtime.registry.get((0, 12))
     assert result[0]["status"] == "ready"
@@ -90,11 +100,19 @@ def test_prepare_load_transitions_absent_to_ready_and_stores_shard():
 
 def test_prepare_keep_validates_existing_serving_shard_without_reloading():
     loader = FakeLoader()
-    runtime = NodeRuntime(node_id="node-a", family=ModelFamily.QWEN, total_layers=24, loader=loader)
-    runtime.registry.put(ShardRecord((0, 12), role="first", state="serving", shard_obj="warm", active_owner=True))
+    runtime = NodeRuntime(
+        node_id="node-a", family=ModelFamily.QWEN, total_layers=24, loader=loader
+    )
+    runtime.registry.put(
+        ShardRecord(
+            (0, 12), role="first", state="serving", shard_obj="warm", active_owner=True
+        )
+    )
 
     actions = [NodeReconfigurationAction("node-a", "keep", 0, 12, role="first")]
-    result = runtime.prepare_reconfiguration(model_id="Qwen/Qwen2.5-0.5B-Instruct", actions=actions)
+    result = runtime.prepare_reconfiguration(
+        model_id="Qwen/Qwen2.5-0.5B-Instruct", actions=actions
+    )
 
     assert result[0]["status"] == "ready"
     assert loader.loaded is None
@@ -103,10 +121,18 @@ def test_prepare_keep_validates_existing_serving_shard_without_reloading():
 
 def test_prepare_move_in_uses_local_reload_and_stays_non_active_until_commit():
     loader = FakeLoader()
-    runtime = NodeRuntime(node_id="node-c", family=ModelFamily.QWEN, total_layers=24, loader=loader)
+    runtime = NodeRuntime(
+        node_id="node-c", family=ModelFamily.QWEN, total_layers=24, loader=loader
+    )
 
-    actions = [NodeReconfigurationAction("node-c", "move_in", 0, 12, role="first", from_node_id="node-a")]
-    runtime.prepare_reconfiguration(model_id="Qwen/Qwen2.5-0.5B-Instruct", actions=actions)
+    actions = [
+        NodeReconfigurationAction(
+            "node-c", "move_in", 0, 12, role="first", from_node_id="node-a"
+        )
+    ]
+    runtime.prepare_reconfiguration(
+        model_id="Qwen/Qwen2.5-0.5B-Instruct", actions=actions
+    )
 
     record = runtime.registry.get((0, 12))
     assert loader.loaded.start_layer == 0
@@ -115,11 +141,19 @@ def test_prepare_move_in_uses_local_reload_and_stays_non_active_until_commit():
 
 
 def test_prepare_unload_marks_pending_but_does_not_remove_serving_shard():
-    runtime = NodeRuntime(node_id="node-a", family=ModelFamily.QWEN, total_layers=24, loader=FakeLoader())
-    runtime.registry.put(ShardRecord((0, 12), role="first", state="serving", shard_obj="warm", active_owner=True))
+    runtime = NodeRuntime(
+        node_id="node-a", family=ModelFamily.QWEN, total_layers=24, loader=FakeLoader()
+    )
+    runtime.registry.put(
+        ShardRecord(
+            (0, 12), role="first", state="serving", shard_obj="warm", active_owner=True
+        )
+    )
 
     actions = [NodeReconfigurationAction("node-a", "unload", 0, 12, role="first")]
-    runtime.prepare_reconfiguration(model_id="Qwen/Qwen2.5-0.5B-Instruct", actions=actions)
+    runtime.prepare_reconfiguration(
+        model_id="Qwen/Qwen2.5-0.5B-Instruct", actions=actions
+    )
 
     record = runtime.registry.get((0, 12))
     assert record is not None
@@ -128,10 +162,22 @@ def test_prepare_unload_marks_pending_but_does_not_remove_serving_shard():
 
 
 def test_commit_promotes_ready_move_in_to_serving_owner():
-    runtime = NodeRuntime(node_id="node-c", family=ModelFamily.QWEN, total_layers=24, loader=FakeLoader())
-    runtime.registry.put(ShardRecord((0, 12), role="first", state="ready", shard_obj="warm", active_owner=False))
+    runtime = NodeRuntime(
+        node_id="node-c", family=ModelFamily.QWEN, total_layers=24, loader=FakeLoader()
+    )
+    runtime.registry.put(
+        ShardRecord(
+            (0, 12), role="first", state="ready", shard_obj="warm", active_owner=False
+        )
+    )
 
-    runtime.commit_reconfiguration([NodeReconfigurationAction("node-c", "move_in", 0, 12, role="first", from_node_id="node-a")])
+    runtime.commit_reconfiguration(
+        [
+            NodeReconfigurationAction(
+                "node-c", "move_in", 0, 12, role="first", from_node_id="node-a"
+            )
+        ]
+    )
 
     record = runtime.registry.get((0, 12))
     assert record.state == "serving"
@@ -139,10 +185,23 @@ def test_commit_promotes_ready_move_in_to_serving_owner():
 
 
 def test_commit_unload_releases_pending_shard():
-    runtime = NodeRuntime(node_id="node-a", family=ModelFamily.QWEN, total_layers=24, loader=FakeLoader())
-    runtime.registry.put(ShardRecord((0, 12), role="first", state="serving", shard_obj="warm", active_owner=True, pending_unload=True))
+    runtime = NodeRuntime(
+        node_id="node-a", family=ModelFamily.QWEN, total_layers=24, loader=FakeLoader()
+    )
+    runtime.registry.put(
+        ShardRecord(
+            (0, 12),
+            role="first",
+            state="serving",
+            shard_obj="warm",
+            active_owner=True,
+            pending_unload=True,
+        )
+    )
 
-    runtime.commit_reconfiguration([NodeReconfigurationAction("node-a", "unload", 0, 12, role="first")])
+    runtime.commit_reconfiguration(
+        [NodeReconfigurationAction("node-a", "unload", 0, 12, role="first")]
+    )
 
     assert runtime.registry.get((0, 12)) is None
 
@@ -163,8 +222,12 @@ def test_prepare_handler_loads_and_signals_ready_for_this_node():
         model_id="Qwen/Qwen2.5-0.5B-Instruct",
         coordinator_id="node-a",
         actions_by_node={
-            "node-a": [NodeReconfigurationAction("node-a", "load", 0, 12, role="first")],
-            "node-b": [NodeReconfigurationAction("node-b", "keep", 12, 24, role="last")],
+            "node-a": [
+                NodeReconfigurationAction("node-a", "load", 0, 12, role="first")
+            ],
+            "node-b": [
+                NodeReconfigurationAction("node-b", "keep", 12, 24, role="last")
+            ],
         },
     )
 
@@ -186,9 +249,24 @@ def test_prepare_handler_loads_and_signals_ready_for_this_node():
 
 def test_commit_handler_promotes_and_releases_for_this_node_only():
     transport = FakeTransport()
-    runtime = NodeRuntime(node_id="node-a", family=ModelFamily.QWEN, total_layers=24, loader=FakeLoader())
-    runtime.registry.put(ShardRecord((0, 12), role="first", state="ready", shard_obj="warm", active_owner=False))
-    runtime.registry.put(ShardRecord((12, 24), role="last", state="serving", shard_obj="old", active_owner=True, pending_unload=True))
+    runtime = NodeRuntime(
+        node_id="node-a", family=ModelFamily.QWEN, total_layers=24, loader=FakeLoader()
+    )
+    runtime.registry.put(
+        ShardRecord(
+            (0, 12), role="first", state="ready", shard_obj="warm", active_owner=False
+        )
+    )
+    runtime.registry.put(
+        ShardRecord(
+            (12, 24),
+            role="last",
+            state="serving",
+            shard_obj="old",
+            active_owner=True,
+            pending_unload=True,
+        )
+    )
     runtime.attach_transport(transport)
 
     transport.broadcast(
@@ -198,10 +276,18 @@ def test_commit_handler_promotes_and_releases_for_this_node_only():
             "coordinator_id": "node-c",
             "actions_by_node": {
                 "node-a": [
-                    NodeReconfigurationAction("node-a", "move_in", 0, 12, role="first", from_node_id="node-b").to_dict(),
-                    NodeReconfigurationAction("node-a", "unload", 12, 24, role="last").to_dict(),
+                    NodeReconfigurationAction(
+                        "node-a", "move_in", 0, 12, role="first", from_node_id="node-b"
+                    ).to_dict(),
+                    NodeReconfigurationAction(
+                        "node-a", "unload", 12, 24, role="last"
+                    ).to_dict(),
                 ],
-                "node-b": [NodeReconfigurationAction("node-b", "keep", 12, 24, role="last").to_dict()],
+                "node-b": [
+                    NodeReconfigurationAction(
+                        "node-b", "keep", 12, 24, role="last"
+                    ).to_dict()
+                ],
             },
         },
     )
@@ -211,8 +297,12 @@ def test_commit_handler_promotes_and_releases_for_this_node_only():
 
 
 def test_begin_request_increments_inflight_on_serving_shard():
-    runtime = NodeRuntime(node_id="node-a", family=ModelFamily.QWEN, total_layers=24, loader=FakeLoader())
-    runtime.registry.put(ShardRecord((0, 12), role="first", state="serving", active_owner=True))
+    runtime = NodeRuntime(
+        node_id="node-a", family=ModelFamily.QWEN, total_layers=24, loader=FakeLoader()
+    )
+    runtime.registry.put(
+        ShardRecord((0, 12), role="first", state="serving", active_owner=True)
+    )
 
     runtime.begin_request((0, 12))
 
@@ -220,7 +310,9 @@ def test_begin_request_increments_inflight_on_serving_shard():
 
 
 def test_finish_request_releases_draining_shard_when_inflight_reaches_zero():
-    runtime = NodeRuntime(node_id="node-a", family=ModelFamily.QWEN, total_layers=24, loader=FakeLoader())
+    runtime = NodeRuntime(
+        node_id="node-a", family=ModelFamily.QWEN, total_layers=24, loader=FakeLoader()
+    )
     runtime.registry.put(
         ShardRecord(
             (0, 12),
@@ -239,7 +331,9 @@ def test_finish_request_releases_draining_shard_when_inflight_reaches_zero():
 
 
 def test_commit_unload_keeps_shard_when_inflight_requests_exist_and_marks_draining():
-    runtime = NodeRuntime(node_id="node-a", family=ModelFamily.QWEN, total_layers=24, loader=FakeLoader())
+    runtime = NodeRuntime(
+        node_id="node-a", family=ModelFamily.QWEN, total_layers=24, loader=FakeLoader()
+    )
     runtime.registry.put(
         ShardRecord(
             (0, 12),
@@ -252,7 +346,9 @@ def test_commit_unload_keeps_shard_when_inflight_requests_exist_and_marks_draini
         )
     )
 
-    runtime.commit_reconfiguration([NodeReconfigurationAction("node-a", "unload", 0, 12, role="first")])
+    runtime.commit_reconfiguration(
+        [NodeReconfigurationAction("node-a", "unload", 0, 12, role="first")]
+    )
 
     record = runtime.registry.get((0, 12))
     assert record is not None
@@ -261,7 +357,9 @@ def test_commit_unload_keeps_shard_when_inflight_requests_exist_and_marks_draini
 
 
 def test_commit_unload_drops_immediately_when_no_inflight_requests_exist():
-    runtime = NodeRuntime(node_id="node-a", family=ModelFamily.QWEN, total_layers=24, loader=FakeLoader())
+    runtime = NodeRuntime(
+        node_id="node-a", family=ModelFamily.QWEN, total_layers=24, loader=FakeLoader()
+    )
     runtime.registry.put(
         ShardRecord(
             (0, 12),
@@ -274,13 +372,17 @@ def test_commit_unload_drops_immediately_when_no_inflight_requests_exist():
         )
     )
 
-    runtime.commit_reconfiguration([NodeReconfigurationAction("node-a", "unload", 0, 12, role="first")])
+    runtime.commit_reconfiguration(
+        [NodeReconfigurationAction("node-a", "unload", 0, 12, role="first")]
+    )
 
     assert runtime.registry.get((0, 12)) is None
 
 
 def test_node_runtime_debug_snapshot_reports_shard_state_and_inflight():
-    runtime = NodeRuntime(node_id="node-a", family=ModelFamily.QWEN, total_layers=24, loader=FakeLoader())
+    runtime = NodeRuntime(
+        node_id="node-a", family=ModelFamily.QWEN, total_layers=24, loader=FakeLoader()
+    )
     runtime.registry.put(
         ShardRecord(
             (0, 12),
@@ -301,8 +403,12 @@ def test_node_runtime_debug_snapshot_reports_shard_state_and_inflight():
 
 
 def test_old_owner_can_finish_existing_request_after_commit_while_new_owner_serves_new_work():
-    old_runtime = NodeRuntime(node_id="node-a", family=ModelFamily.QWEN, total_layers=24, loader=FakeLoader())
-    new_runtime = NodeRuntime(node_id="node-c", family=ModelFamily.QWEN, total_layers=24, loader=FakeLoader())
+    old_runtime = NodeRuntime(
+        node_id="node-a", family=ModelFamily.QWEN, total_layers=24, loader=FakeLoader()
+    )
+    new_runtime = NodeRuntime(
+        node_id="node-c", family=ModelFamily.QWEN, total_layers=24, loader=FakeLoader()
+    )
 
     old_runtime.registry.put(
         ShardRecord(
@@ -324,8 +430,16 @@ def test_old_owner_can_finish_existing_request_after_commit_while_new_owner_serv
         )
     )
 
-    old_runtime.commit_reconfiguration([NodeReconfigurationAction("node-a", "unload", 0, 12, role="first")])
-    new_runtime.commit_reconfiguration([NodeReconfigurationAction("node-c", "move_in", 0, 12, role="first", from_node_id="node-a")])
+    old_runtime.commit_reconfiguration(
+        [NodeReconfigurationAction("node-a", "unload", 0, 12, role="first")]
+    )
+    new_runtime.commit_reconfiguration(
+        [
+            NodeReconfigurationAction(
+                "node-c", "move_in", 0, 12, role="first", from_node_id="node-a"
+            )
+        ]
+    )
 
     assert old_runtime.registry.get((0, 12)).state == "draining"
     assert new_runtime.registry.get((0, 12)).state == "serving"

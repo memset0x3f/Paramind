@@ -4,7 +4,11 @@ from dataclasses import asdict
 import itertools
 import time
 
-from inference.ClusterPlanner import diff_assignment_changes, plan_static_distribution, replan_distribution
+from inference.ClusterPlanner import (
+    diff_assignment_changes,
+    plan_static_distribution,
+    replan_distribution,
+)
 from inference.ClusterTypes import (
     NodeProfile,
     NodeReconfigurationAction,
@@ -35,9 +39,15 @@ class ClusterCoordinator:
 
     def build_plan(self, profiles) -> PlacementPlan:
         normalized_profiles = [
-            profile
-            if isinstance(profile, (NodeProfile, NodeState))
-            else (NodeState.from_dict(profile) if "device_type" in profile else NodeProfile.from_dict(profile))
+            (
+                profile
+                if isinstance(profile, (NodeProfile, NodeState))
+                else (
+                    NodeState.from_dict(profile)
+                    if "device_type" in profile
+                    else NodeProfile.from_dict(profile)
+                )
+            )
             for profile in profiles
         ]
         plan = plan_static_distribution(
@@ -50,9 +60,15 @@ class ClusterCoordinator:
 
     def replan(self, profiles) -> PlacementPlan:
         normalized_profiles = [
-            profile
-            if isinstance(profile, (NodeProfile, NodeState))
-            else (NodeState.from_dict(profile) if "device_type" in profile else NodeProfile.from_dict(profile))
+            (
+                profile
+                if isinstance(profile, (NodeProfile, NodeState))
+                else (
+                    NodeState.from_dict(profile)
+                    if "device_type" in profile
+                    else NodeProfile.from_dict(profile)
+                )
+            )
             for profile in profiles
         ]
         if self.current_plan is None:
@@ -187,7 +203,9 @@ class ClusterCoordinator:
         timeout_seconds: float = 5.0,
         poll_interval_seconds: float = 0.01,
     ) -> bool:
-        deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
+        deadline = (
+            None if timeout_seconds is None else time.monotonic() + timeout_seconds
+        )
         while not self.all_ready(plan):
             if deadline is not None and time.monotonic() >= deadline:
                 raise TimeoutError("Timed out waiting for cluster readiness")
@@ -198,7 +216,11 @@ class ClusterCoordinator:
         return {
             "model_id": self.model_id,
             "total_layers": self.total_layers,
-            "current_coordinator_id": self.current_plan.coordinator_id if self.current_plan is not None else None,
+            "current_coordinator_id": (
+                self.current_plan.coordinator_id
+                if self.current_plan is not None
+                else None
+            ),
             "ready_nodes": sorted(self.ready_nodes),
             "pending_reconfiguration": self.pending_reconfiguration is not None,
             "reconfig_ready_nodes": sorted(self.reconfig_ready_nodes),

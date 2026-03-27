@@ -20,7 +20,6 @@ from inference.ClusterTypes import NodeProfile, PlacementPlan
 from inference.NodeInventory import normalize_node_state
 from scripts.demo_rendering import render_key_value_block, render_section, render_table
 
-
 MODEL_ID = "Qwen/Qwen2.5-0.5B-Instruct"
 TOTAL_LAYERS = 24
 NODE_ORDER = ["node-a", "node-b", "node-c", "node-d"]
@@ -117,9 +116,15 @@ class ClusterDemoSession:
         self.last_action = "reset"
 
     def _active_profiles(self) -> list[NodeProfile]:
-        return [self.node_profiles[node_id] for node_id in NODE_ORDER if node_id in self.active_node_ids]
+        return [
+            self.node_profiles[node_id]
+            for node_id in NODE_ORDER
+            if node_id in self.active_node_ids
+        ]
 
-    def _set_loaded_shards(self, node_id: str, new_ranges: list[tuple[int, int]]) -> None:
+    def _set_loaded_shards(
+        self, node_id: str, new_ranges: list[tuple[int, int]]
+    ) -> None:
         current = self.node_profiles[node_id]
         self.node_profiles[node_id] = replace(current, loaded_shards=sorted(new_ranges))
 
@@ -158,7 +163,14 @@ class ClusterDemoSession:
         for node_id in NODE_ORDER:
             profile = self.node_profiles[node_id]
             if not profile.loaded_shards:
-                rows.append((node_id, "inactive" if node_id not in self.active_node_ids else "active", "-", "-"))
+                rows.append(
+                    (
+                        node_id,
+                        "inactive" if node_id not in self.active_node_ids else "active",
+                        "-",
+                        "-",
+                    )
+                )
                 continue
             for start_layer, end_layer in profile.loaded_shards:
                 rows.append(
@@ -179,7 +191,9 @@ class ClusterDemoSession:
         if not self.active_node_ids:
             return "[SCORING]\n(no active nodes yet)"
         active_profiles = self._active_profiles()
-        reference_width = estimate_reference_stage_width(TOTAL_LAYERS, len(active_profiles))
+        reference_width = estimate_reference_stage_width(
+            TOTAL_LAYERS, len(active_profiles)
+        )
         lines = ["[SCORING]"]
         for profile in active_profiles:
             state = normalize_node_state(profile)
@@ -218,8 +232,16 @@ class ClusterDemoSession:
             "CURRENT CLUSTER",
             {
                 "model": MODEL_ID,
-                "active_nodes": ", ".join(sorted(self.active_node_ids)) if self.active_node_ids else "(none)",
-                "coordinator": self.current_plan.coordinator_id if self.current_plan is not None else "(none)",
+                "active_nodes": (
+                    ", ".join(sorted(self.active_node_ids))
+                    if self.active_node_ids
+                    else "(none)"
+                ),
+                "coordinator": (
+                    self.current_plan.coordinator_id
+                    if self.current_plan is not None
+                    else "(none)"
+                ),
                 "last_action": self.last_action,
             },
         )
@@ -247,7 +269,9 @@ class ClusterDemoSession:
         body = "\n".join(self.event_log[-6:]) if self.event_log else "(no events yet)"
         return render_section("EVENT LOG", body)
 
-    def render_current(self, include_guide: bool = False, title: str | None = None) -> str:
+    def render_current(
+        self, include_guide: bool = False, title: str | None = None
+    ) -> str:
         sections = []
         if include_guide:
             sections.append(format_parameter_guide())
@@ -283,7 +307,9 @@ class ClusterDemoSession:
         )
         self._refresh_loaded_state_from_plan(self.current_plan)
         self.last_action = f"start {','.join(node_ids)}"
-        self.event_log.append(f"start: active_nodes={','.join(sorted(self.active_node_ids))}")
+        self.event_log.append(
+            f"start: active_nodes={','.join(sorted(self.active_node_ids))}"
+        )
         return self.render_current(title="=== AFTER START ===")
 
     def join(self, node_id: str) -> str:

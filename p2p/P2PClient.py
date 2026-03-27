@@ -18,7 +18,6 @@ from common.Constants import UDP_CHUNK_SIZE
 from common.Utils import sendTorchData, deserializeTorchData
 from inference import QwenSlice
 
-
 logger = logging.getLogger(__name__)
 
 

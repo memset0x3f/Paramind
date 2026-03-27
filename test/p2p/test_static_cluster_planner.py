@@ -32,7 +32,9 @@ def test_static_distribution_assigns_contiguous_ranges():
     assert [(a.start_layer, a.end_layer) for a in plan.assignments][-1][1] == 24
     for left, right in zip(plan.assignments, plan.assignments[1:]):
         assert left.end_layer == right.start_layer
-    sizes = {assignment.node_id: assignment.num_layers for assignment in plan.assignments}
+    sizes = {
+        assignment.node_id: assignment.num_layers for assignment in plan.assignments
+    }
     assert sizes["node-a"] >= sizes["node-c"]
     assert plan.coordinator_id == "node-a"
     assert choose_coordinator(nodes) == "node-a"

@@ -31,9 +31,7 @@ class LocalInferenceEngine:
             dtype="float16",
         )
         self.shard = ShardLoader(cfg, device=device).load()
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            model_id, trust_remote_code=True
-        )
+        self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 
     def generate_stream(
         self,

@@ -4,9 +4,13 @@ from inference.ClusterTypes import NodeProfile
 
 def test_build_node_profile_returns_capacity_fields(monkeypatch):
     monkeypatch.setattr("inference.DeviceProfile._detect_device", lambda: "cpu")
-    monkeypatch.setattr("inference.DeviceProfile._detect_memory_gb", lambda: (16.0, 10.5))
+    monkeypatch.setattr(
+        "inference.DeviceProfile._detect_memory_gb", lambda: (16.0, 10.5)
+    )
 
-    profile = build_node_profile(node_id="node-a", host="10.0.0.1", loaded_shards=[(0, 12)])
+    profile = build_node_profile(
+        node_id="node-a", host="10.0.0.1", loaded_shards=[(0, 12)]
+    )
 
     assert profile.node_id == "node-a"
     assert profile.device == "cpu"
@@ -17,9 +21,13 @@ def test_build_node_profile_returns_capacity_fields(monkeypatch):
 
 def test_node_profile_payload_round_trip(monkeypatch):
     monkeypatch.setattr("inference.DeviceProfile._detect_device", lambda: "cpu")
-    monkeypatch.setattr("inference.DeviceProfile._detect_memory_gb", lambda: (16.0, 10.5))
+    monkeypatch.setattr(
+        "inference.DeviceProfile._detect_memory_gb", lambda: (16.0, 10.5)
+    )
 
-    profile = build_node_profile(node_id="node-a", host="10.0.0.1", loaded_shards=[(0, 12)])
+    profile = build_node_profile(
+        node_id="node-a", host="10.0.0.1", loaded_shards=[(0, 12)]
+    )
     payload = profile.to_dict()
     restored = NodeProfile.from_dict(payload)
 

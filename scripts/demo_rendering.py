@@ -22,7 +22,9 @@ def render_table(title: str, columns: list[str], rows: list[tuple[object, ...]])
         widths.append(max(len(value) for value in candidate_values))
 
     def _format_row(values: list[str]) -> str:
-        return " | ".join(f"{value:<{widths[index]}}" for index, value in enumerate(values))
+        return " | ".join(
+            f"{value:<{widths[index]}}" for index, value in enumerate(values)
+        )
 
     lines = [f"[{title}]"]
     lines.append(_format_row(columns))

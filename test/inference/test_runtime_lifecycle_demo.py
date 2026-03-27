@@ -49,7 +49,9 @@ def test_runtime_lifecycle_demo_prints_prepare_and_commit_flow(capsys):
     assert "pending_unload" in output
 
 
-def test_runtime_lifecycle_demo_shows_before_prepare_after_prepare_and_after_commit(capsys):
+def test_runtime_lifecycle_demo_shows_before_prepare_after_prepare_and_after_commit(
+    capsys,
+):
     demo = importlib.import_module("scripts.runtime_lifecycle_demo")
 
     demo.main([])

@@ -87,7 +87,9 @@ class ModelShard(nn.Module):
                     cache_position=cache_position,
                 )
             # layer_output is either (hidden_states,) or (hidden_states, kv_cache)
-            hidden_states = layer_output[0] if isinstance(layer_output, tuple) else layer_output
+            hidden_states = (
+                layer_output[0] if isinstance(layer_output, tuple) else layer_output
+            )
 
         if self.shard_config.is_last_shard and self.norm is not None:
             hidden_states = self.norm(hidden_states)
@@ -327,7 +329,9 @@ class ShardLoader:
         # Single-file model
         for fname in os.listdir(model_path):
             if fname.endswith(".safetensors"):
-                all_keys = load_file(os.path.join(model_path, fname), device="cpu").keys()
+                all_keys = load_file(
+                    os.path.join(model_path, fname), device="cpu"
+                ).keys()
                 return {k: fname for k in all_keys}
 
         raise FileNotFoundError(f"No safetensors files found in {model_path}")

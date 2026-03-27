@@ -11,12 +11,15 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from inference.ClusterCoordinator import ClusterCoordinator
-from inference.ClusterTypes import NodeReconfigurationAction, ReconfigurationPlan, ShardAssignment
+from inference.ClusterTypes import (
+    NodeReconfigurationAction,
+    ReconfigurationPlan,
+    ShardAssignment,
+)
 from inference.NodeRuntime import NodeRuntime
 from inference.ShardConfig import ModelFamily
 from inference.ShardRegistry import ShardRecord
 from scripts.demo_rendering import render_key_value_block, render_section, render_table
-
 
 MODEL_ID = "Qwen/Qwen2.5-0.5B-Instruct"
 TOTAL_LAYERS = 12
@@ -103,7 +106,9 @@ def _render_shard_states(runtimes: list[NodeRuntime]) -> str:
     )
 
 
-def _render_ready_commit_status(coordinator: ClusterCoordinator, prepared_nodes: list[str]) -> str:
+def _render_ready_commit_status(
+    coordinator: ClusterCoordinator, prepared_nodes: list[str]
+) -> str:
     snapshot = coordinator.debug_snapshot()
     return render_table(
         "READY / COMMIT STATUS",
@@ -119,7 +124,9 @@ def _render_ready_commit_status(coordinator: ClusterCoordinator, prepared_nodes:
     )
 
 
-def _render_current_cluster(coordinator: ClusterCoordinator, runtimes: list[NodeRuntime]) -> str:
+def _render_current_cluster(
+    coordinator: ClusterCoordinator, runtimes: list[NodeRuntime]
+) -> str:
     snapshot = coordinator.debug_snapshot()
     return render_key_value_block(
         "CURRENT CLUSTER",
@@ -234,8 +241,12 @@ def render_runtime_snapshot(snapshot: dict) -> str:
                 {
                     "model": coordinator_snapshot["model_id"],
                     "total_layers": coordinator_snapshot["total_layers"],
-                    "current_coordinator_id": coordinator_snapshot["current_coordinator_id"],
-                    "runtime_nodes": ", ".join(runtime["node_id"] for runtime in snapshot["runtimes"]),
+                    "current_coordinator_id": coordinator_snapshot[
+                        "current_coordinator_id"
+                    ],
+                    "runtime_nodes": ", ".join(
+                        runtime["node_id"] for runtime in snapshot["runtimes"]
+                    ),
                     "phase": coordinator_snapshot["phase"],
                 },
             ),
@@ -246,7 +257,11 @@ def render_runtime_snapshot(snapshot: dict) -> str:
             ),
             render_section(
                 "EVENT LOG",
-                "\n".join(snapshot["event_log"]) if snapshot["event_log"] else "(no events yet)",
+                (
+                    "\n".join(snapshot["event_log"])
+                    if snapshot["event_log"]
+                    else "(no events yet)"
+                ),
             ),
             render_table(
                 "SHARD STATES",
@@ -267,9 +282,15 @@ def render_runtime_snapshot(snapshot: dict) -> str:
                 rows=[
                     ("phase", coordinator_snapshot["phase"]),
                     ("ready_nodes", coordinator_snapshot["ready_nodes"]),
-                    ("reconfig_ready_nodes", coordinator_snapshot["reconfig_ready_nodes"]),
+                    (
+                        "reconfig_ready_nodes",
+                        coordinator_snapshot["reconfig_ready_nodes"],
+                    ),
                     ("prepared_nodes", snapshot["prepared_nodes"]),
-                    ("reconfiguration_committed", coordinator_snapshot["reconfiguration_committed"]),
+                    (
+                        "reconfiguration_committed",
+                        coordinator_snapshot["reconfiguration_committed"],
+                    ),
                     ("reconfiguration_id", coordinator_snapshot["reconfiguration_id"]),
                 ],
             ),
@@ -281,7 +302,9 @@ def build_demo_state() -> dict:
     transport = DemoTransport()
     prepared_nodes: list[str] = []
 
-    coordinator = ClusterCoordinator(transport=transport, model_id=MODEL_ID, total_layers=TOTAL_LAYERS)
+    coordinator = ClusterCoordinator(
+        transport=transport, model_id=MODEL_ID, total_layers=TOTAL_LAYERS
+    )
 
     def _mark_prepared(node_id: str):
         prepared_nodes.append(node_id)
@@ -326,7 +349,11 @@ def build_demo_state() -> dict:
     coordinator.current_plan = type(
         "CurrentPlan",
         (),
-        {"model_id": MODEL_ID, "coordinator_id": "node-a", "assignments": [initial_assignment]},
+        {
+            "model_id": MODEL_ID,
+            "coordinator_id": "node-a",
+            "assignments": [initial_assignment],
+        },
     )()
 
     reconfiguration = ReconfigurationPlan(
@@ -392,7 +419,9 @@ def build_demo_state() -> dict:
 
 def run_demo() -> str:
     state = build_demo_state()
-    rendered_snapshots = [render_runtime_snapshot(snapshot) for snapshot in state["snapshots"]]
+    rendered_snapshots = [
+        render_runtime_snapshot(snapshot) for snapshot in state["snapshots"]
+    ]
     return "\n\n".join([state["parameter_guide"], *rendered_snapshots])
 
 

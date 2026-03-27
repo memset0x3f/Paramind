@@ -50,7 +50,9 @@ def _parse_darwin_vm_stat(text: str) -> tuple[int, int]:
     return page_size, available_pages
 
 
-def _read_linux_meminfo_kb(path: str = "/proc/meminfo") -> tuple[float | None, float | None]:
+def _read_linux_meminfo_kb(
+    path: str = "/proc/meminfo",
+) -> tuple[float | None, float | None]:
     try:
         with open(path, encoding="utf-8") as handle:
             text = handle.read()
@@ -191,14 +193,18 @@ class NodeState:
             return max(self.max_blocks_capacity, 0)
         if block_memory_gb <= 0:
             raise ValueError("block_memory_gb must be positive")
-        return max(int(math.floor(self.effective_free_memory_gb() / block_memory_gb)), 0)
+        return max(
+            int(math.floor(self.effective_free_memory_gb() / block_memory_gb)), 0
+        )
 
     def effective_speed(self) -> float:
         if self.block_throughput is not None and self.block_throughput > 0:
             return self.block_throughput
         if self.block_latency_ms is not None and self.block_latency_ms > 0:
             return 1000.0 / self.block_latency_ms
-        baseline = self.effective_free_memory_gb() + (100.0 if self.device_type == "cuda" else 5.0)
+        baseline = self.effective_free_memory_gb() + (
+            100.0 if self.device_type == "cuda" else 5.0
+        )
         return max(baseline, 0.1)
 
     def to_dict(self) -> dict:
@@ -259,7 +265,9 @@ def from_local_snapshot(
         total_memory_gb=total_memory_gb,
         free_memory_gb=free_memory_gb,
         kv_headroom_gb=kv_headroom_gb,
-        max_blocks_capacity=max(int(math.floor(max(free_memory_gb - kv_headroom_gb, 0.0))), 0),
+        max_blocks_capacity=max(
+            int(math.floor(max(free_memory_gb - kv_headroom_gb, 0.0))), 0
+        ),
         block_throughput=benchmark_block_speed(device_type),
         loaded_ranges=loaded_ranges,
     )

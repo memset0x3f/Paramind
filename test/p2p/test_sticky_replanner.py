@@ -7,7 +7,10 @@ from inference.ClusterTypes import NodeProfile, PlacementPlan, ShardAssignment
 
 
 def _assert_contiguous_cover(plan, total_layers):
-    pairs = [(assignment.start_layer, assignment.end_layer) for assignment in plan.assignments]
+    pairs = [
+        (assignment.start_layer, assignment.end_layer)
+        for assignment in plan.assignments
+    ]
     assert pairs[0][0] == 0
     assert pairs[-1][1] == total_layers
     for left, right in zip(pairs, pairs[1:]):
@@ -115,8 +118,14 @@ def test_replanner_prefers_lower_cost_owner_instead_of_static_sort_order():
 
     _assert_contiguous_cover(new_plan, 24)
     assert any(assignment.node_id == "node-b" for assignment in new_plan.assignments)
-    assert any(assignment.source_node_id == "node-a" for assignment in new_plan.assignments)
-    assert all(assignment.node_id != "node-a" or assignment.end_layer - assignment.start_layer < 12 for assignment in new_plan.assignments)
+    assert any(
+        assignment.source_node_id == "node-a" for assignment in new_plan.assignments
+    )
+    assert all(
+        assignment.node_id != "node-a"
+        or assignment.end_layer - assignment.start_layer < 12
+        for assignment in new_plan.assignments
+    )
 
 
 def test_replanner_rejects_lower_cost_node_once_capacity_is_used():
@@ -155,7 +164,9 @@ def test_replanner_rejects_lower_cost_node_once_capacity_is_used():
     _assert_contiguous_cover(new_plan, 24)
     assigned_by_node = {}
     for assignment in new_plan.assignments:
-        assigned_by_node[assignment.node_id] = assigned_by_node.get(assignment.node_id, 0) + assignment.num_layers
+        assigned_by_node[assignment.node_id] = (
+            assigned_by_node.get(assignment.node_id, 0) + assignment.num_layers
+        )
     assert assigned_by_node["node-b"] <= 18
     assert any(assignment.node_id == "node-c" for assignment in new_plan.assignments)
 
@@ -232,5 +243,10 @@ def test_replanner_uses_cost_helper_when_capacity_breaks():
 
     _assert_contiguous_cover(new_plan, 24)
     assert new_plan is not current
-    assert any(assignment.node_id == "node-b" and assignment.start_layer == 0 for assignment in new_plan.assignments)
-    assert any(assignment.source_node_id == "node-a" for assignment in new_plan.assignments)
+    assert any(
+        assignment.node_id == "node-b" and assignment.start_layer == 0
+        for assignment in new_plan.assignments
+    )
+    assert any(
+        assignment.source_node_id == "node-a" for assignment in new_plan.assignments
+    )

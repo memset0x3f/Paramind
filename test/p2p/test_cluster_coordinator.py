@@ -1,7 +1,12 @@
 import pytest
 
 from inference.ClusterCoordinator import ClusterCoordinator
-from inference.ClusterTypes import NodeProfile, NodeReconfigurationAction, ReconfigurationPlan, ShardAssignment
+from inference.ClusterTypes import (
+    NodeProfile,
+    NodeReconfigurationAction,
+    ReconfigurationPlan,
+    ShardAssignment,
+)
 from inference.NodeRuntime import NodeRuntime
 from inference.ShardConfig import ModelFamily
 from inference.ShardRegistry import ShardRecord
@@ -66,26 +71,41 @@ def test_coordinator_build_plan_accepts_profile_payloads():
 
     plan = coordinator.build_plan(payloads)
 
-    assert [assignment.node_id for assignment in plan.assignments] == ["node-a", "node-b"]
+    assert [assignment.node_id for assignment in plan.assignments] == [
+        "node-a",
+        "node-b",
+    ]
 
 
 def test_node_runtime_loads_only_its_assignment():
     loader = FakeLoader()
-    runtime = NodeRuntime(node_id="node-b", family=ModelFamily.QWEN, total_layers=24, loader=loader)
-    assignment = ShardAssignment(node_id="node-b", start_layer=12, end_layer=24, role="last")
+    runtime = NodeRuntime(
+        node_id="node-b", family=ModelFamily.QWEN, total_layers=24, loader=loader
+    )
+    assignment = ShardAssignment(
+        node_id="node-b", start_layer=12, end_layer=24, role="last"
+    )
 
-    runtime.apply_assignment(model_id="Qwen/Qwen2.5-0.5B-Instruct", assignment=assignment)
+    runtime.apply_assignment(
+        model_id="Qwen/Qwen2.5-0.5B-Instruct", assignment=assignment
+    )
 
     assert loader.loaded == assignment
 
 
 def test_node_runtime_rejects_foreign_assignment():
     loader = FakeLoader()
-    runtime = NodeRuntime(node_id="node-b", family=ModelFamily.QWEN, total_layers=24, loader=loader)
-    assignment = ShardAssignment(node_id="node-a", start_layer=12, end_layer=24, role="last")
+    runtime = NodeRuntime(
+        node_id="node-b", family=ModelFamily.QWEN, total_layers=24, loader=loader
+    )
+    assignment = ShardAssignment(
+        node_id="node-a", start_layer=12, end_layer=24, role="last"
+    )
 
     with pytest.raises(ValueError, match="does not match runtime node_id"):
-        runtime.apply_assignment(model_id="Qwen/Qwen2.5-0.5B-Instruct", assignment=assignment)
+        runtime.apply_assignment(
+            model_id="Qwen/Qwen2.5-0.5B-Instruct", assignment=assignment
+        )
 
     assert loader.loaded is None
 
@@ -161,11 +181,17 @@ def test_multi_runtime_static_cluster_smoke():
 
 
 def test_static_cluster_can_plan_load_and_mark_ready():
-    coordinator = ClusterCoordinator(transport=FakeTransport(), model_id="Qwen/Qwen2.5-0.5B-Instruct", total_layers=24)
-    plan = coordinator.build_plan([
-        NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28, 28),
-        NodeProfile("node-b", "10.0.0.2", "cpu", 32, 24, 24),
-    ])
+    coordinator = ClusterCoordinator(
+        transport=FakeTransport(),
+        model_id="Qwen/Qwen2.5-0.5B-Instruct",
+        total_layers=24,
+    )
+    plan = coordinator.build_plan(
+        [
+            NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28, 28),
+            NodeProfile("node-b", "10.0.0.2", "cpu", 32, 24, 24),
+        ]
+    )
 
     for assignment in plan.assignments:
         coordinator.mark_ready(assignment.node_id)
@@ -175,16 +201,37 @@ def test_static_cluster_can_plan_load_and_mark_ready():
 
 def test_runtime_ignores_other_nodes_reconfiguration_actions_and_keeps_own_subset():
     transport = FakeTransport()
-    runtime = NodeRuntime(node_id="node-b", family=ModelFamily.QWEN, total_layers=24, loader=FakeLoader())
-    runtime.registry.put(ShardRecord((12, 24), role="last", state="serving", shard_obj="warm", active_owner=True))
+    runtime = NodeRuntime(
+        node_id="node-b", family=ModelFamily.QWEN, total_layers=24, loader=FakeLoader()
+    )
+    runtime.registry.put(
+        ShardRecord(
+            (12, 24), role="last", state="serving", shard_obj="warm", active_owner=True
+        )
+    )
     runtime.attach_transport(transport)
 
     payload = {
         "model_id": "Qwen/Qwen2.5-0.5B-Instruct",
         "coordinator_id": "node-a",
         "actions_by_node": {
-            "node-a": [{"node_id": "node-a", "action": "unload", "start_layer": 0, "end_layer": 12}],
-            "node-b": [{"node_id": "node-b", "action": "keep", "start_layer": 12, "end_layer": 24, "role": "last"}],
+            "node-a": [
+                {
+                    "node_id": "node-a",
+                    "action": "unload",
+                    "start_layer": 0,
+                    "end_layer": 12,
+                }
+            ],
+            "node-b": [
+                {
+                    "node_id": "node-b",
+                    "action": "keep",
+                    "start_layer": 12,
+                    "end_layer": 24,
+                    "role": "last",
+                }
+            ],
         },
     }
 
@@ -202,15 +249,27 @@ def test_coordinator_broadcasts_reconfiguration_payload():
         total_layers=24,
     )
 
-    coordinator.build_plan([
-        NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28, 28, loaded_shards=[(0, 12)]),
-        NodeProfile("node-b", "10.0.0.2", "cpu", 32, 24, 24, loaded_shards=[(12, 24)]),
-    ])
-    reconfiguration = coordinator.build_reconfiguration([
-        NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28, 28, loaded_shards=[(0, 12)]),
-        NodeProfile("node-b", "10.0.0.2", "cpu", 32, 24, 24, loaded_shards=[(12, 24)]),
-        NodeProfile("node-c", "10.0.0.3", "cuda", 64, 40, 80, loaded_shards=[]),
-    ])
+    coordinator.build_plan(
+        [
+            NodeProfile(
+                "node-a", "10.0.0.1", "cpu", 32, 28, 28, loaded_shards=[(0, 12)]
+            ),
+            NodeProfile(
+                "node-b", "10.0.0.2", "cpu", 32, 24, 24, loaded_shards=[(12, 24)]
+            ),
+        ]
+    )
+    reconfiguration = coordinator.build_reconfiguration(
+        [
+            NodeProfile(
+                "node-a", "10.0.0.1", "cpu", 32, 28, 28, loaded_shards=[(0, 12)]
+            ),
+            NodeProfile(
+                "node-b", "10.0.0.2", "cpu", 32, 24, 24, loaded_shards=[(12, 24)]
+            ),
+            NodeProfile("node-c", "10.0.0.3", "cuda", 64, 40, 80, loaded_shards=[]),
+        ]
+    )
 
     coordinator.broadcast_reconfiguration(reconfiguration)
 
@@ -220,13 +279,21 @@ def test_coordinator_broadcasts_reconfiguration_payload():
 
 def test_prepare_reconfiguration_waits_for_ready_before_commit():
     transport = FakeTransport()
-    coordinator = ClusterCoordinator(transport=transport, model_id="Qwen/Qwen2.5-0.5B-Instruct", total_layers=24)
+    coordinator = ClusterCoordinator(
+        transport=transport, model_id="Qwen/Qwen2.5-0.5B-Instruct", total_layers=24
+    )
     reconfiguration = ReconfigurationPlan(
         model_id="Qwen/Qwen2.5-0.5B-Instruct",
         coordinator_id="node-a",
         actions_by_node={
-            "node-a": [NodeReconfigurationAction("node-a", "keep", 0, 12, role="first")],
-            "node-c": [NodeReconfigurationAction("node-c", "move_in", 12, 24, role="last", from_node_id="node-b")],
+            "node-a": [
+                NodeReconfigurationAction("node-a", "keep", 0, 12, role="first")
+            ],
+            "node-c": [
+                NodeReconfigurationAction(
+                    "node-c", "move_in", 12, 24, role="last", from_node_id="node-b"
+                )
+            ],
         },
     )
 
@@ -243,22 +310,38 @@ def test_prepare_reconfiguration_waits_for_ready_before_commit():
 
 def test_reconfiguration_prepare_then_commit_keeps_old_until_new_ready():
     transport = FakeTransport()
-    coordinator = ClusterCoordinator(transport=transport, model_id="Qwen/Qwen2.5-0.5B-Instruct", total_layers=24)
+    coordinator = ClusterCoordinator(
+        transport=transport, model_id="Qwen/Qwen2.5-0.5B-Instruct", total_layers=24
+    )
     loader_a = FakeLoader()
     loader_c = FakeLoader()
-    runtime_a = NodeRuntime(node_id="node-a", family=ModelFamily.QWEN, total_layers=24, loader=loader_a)
-    runtime_c = NodeRuntime(node_id="node-c", family=ModelFamily.QWEN, total_layers=24, loader=loader_c)
+    runtime_a = NodeRuntime(
+        node_id="node-a", family=ModelFamily.QWEN, total_layers=24, loader=loader_a
+    )
+    runtime_c = NodeRuntime(
+        node_id="node-c", family=ModelFamily.QWEN, total_layers=24, loader=loader_c
+    )
     runtime_a.attach_transport(transport, on_ready=coordinator.mark_reconfig_ready)
     runtime_c.attach_transport(transport, on_ready=coordinator.mark_reconfig_ready)
 
-    runtime_a.registry.put(ShardRecord((0, 12), role="first", state="serving", shard_obj="warm", active_owner=True))
+    runtime_a.registry.put(
+        ShardRecord(
+            (0, 12), role="first", state="serving", shard_obj="warm", active_owner=True
+        )
+    )
 
     reconfiguration = ReconfigurationPlan(
         model_id="Qwen/Qwen2.5-0.5B-Instruct",
         coordinator_id="node-c",
         actions_by_node={
-            "node-a": [NodeReconfigurationAction("node-a", "unload", 0, 12, role="first")],
-            "node-c": [NodeReconfigurationAction("node-c", "move_in", 0, 12, role="first", from_node_id="node-a")],
+            "node-a": [
+                NodeReconfigurationAction("node-a", "unload", 0, 12, role="first")
+            ],
+            "node-c": [
+                NodeReconfigurationAction(
+                    "node-c", "move_in", 0, 12, role="first", from_node_id="node-a"
+                )
+            ],
         },
     )
 
@@ -273,11 +356,15 @@ def test_reconfiguration_prepare_then_commit_keeps_old_until_new_ready():
 
 def test_begin_reconfiguration_sets_phase_and_timestamps():
     transport = FakeTransport()
-    coordinator = ClusterCoordinator(transport=transport, model_id="Qwen/Qwen2.5-0.5B-Instruct", total_layers=24)
+    coordinator = ClusterCoordinator(
+        transport=transport, model_id="Qwen/Qwen2.5-0.5B-Instruct", total_layers=24
+    )
     reconfiguration = ReconfigurationPlan(
         model_id="Qwen/Qwen2.5-0.5B-Instruct",
         coordinator_id="node-a",
-        actions_by_node={"node-a": [NodeReconfigurationAction("node-a", "keep", 0, 12, role="first")]},
+        actions_by_node={
+            "node-a": [NodeReconfigurationAction("node-a", "keep", 0, 12, role="first")]
+        },
     )
 
     coordinator.begin_reconfiguration(reconfiguration)
@@ -290,11 +377,15 @@ def test_begin_reconfiguration_sets_phase_and_timestamps():
 
 def test_mark_reconfig_ready_moves_phase_to_commit_when_all_nodes_ready():
     transport = FakeTransport()
-    coordinator = ClusterCoordinator(transport=transport, model_id="Qwen/Qwen2.5-0.5B-Instruct", total_layers=24)
+    coordinator = ClusterCoordinator(
+        transport=transport, model_id="Qwen/Qwen2.5-0.5B-Instruct", total_layers=24
+    )
     reconfiguration = ReconfigurationPlan(
         model_id="Qwen/Qwen2.5-0.5B-Instruct",
         coordinator_id="node-a",
-        actions_by_node={"node-a": [NodeReconfigurationAction("node-a", "keep", 0, 12, role="first")]},
+        actions_by_node={
+            "node-a": [NodeReconfigurationAction("node-a", "keep", 0, 12, role="first")]
+        },
     )
 
     coordinator.begin_reconfiguration(reconfiguration)

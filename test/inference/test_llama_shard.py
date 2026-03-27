@@ -8,7 +8,10 @@ from inference.ShardConfig import ShardConfig, ModelFamily
 def _hf_token():
     """Match huggingface_hub: env vars, then token from `huggingface-cli login` cache."""
     import os
-    env = (os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN") or "").strip()
+
+    env = (
+        os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN") or ""
+    ).strip()
     if env:
         return env
     try:
@@ -27,16 +30,22 @@ def require_hf_token():
             "No Hugging Face token visible to this process. Llama shard tests need the same "
             "credential that huggingface_hub uses: export HF_TOKEN=... or "
             "HUGGINGFACE_HUB_TOKEN=..., or run `huggingface-cli login` once. "
-            "If you already exported in a terminal but tests still fail: IDE / \"Run Test\" "
+            'If you already exported in a terminal but tests still fail: IDE / "Run Test" '
             "often does not inherit that shell — run pytest in the same terminal, or set "
             "HF_TOKEN in your IDE env / .env. Token: https://huggingface.co/settings/tokens"
         )
 
 
 def _local_llama_snapshot():
-    env_override = Path.home() / ".cache" / "huggingface" / "hub" / \
-        "models--unsloth--Llama-3.2-1B-Instruct" / "snapshots" / \
-        "5a8abab4a5d6f164389b1079fb721cfab8d7126c"
+    env_override = (
+        Path.home()
+        / ".cache"
+        / "huggingface"
+        / "hub"
+        / "models--unsloth--Llama-3.2-1B-Instruct"
+        / "snapshots"
+        / "5a8abab4a5d6f164389b1079fb721cfab8d7126c"
+    )
     required = [
         "config.json",
         "model.safetensors",
@@ -45,7 +54,9 @@ def _local_llama_snapshot():
         "special_tokens_map.json",
         "generation_config.json",
     ]
-    if env_override.is_dir() and all((env_override / name).exists() for name in required):
+    if env_override.is_dir() and all(
+        (env_override / name).exists() for name in required
+    ):
         return str(env_override)
     return None
 

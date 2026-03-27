@@ -1,9 +1,9 @@
-PYTHON ?= python3.11
+PYTHON ?= python
 
 .PHONY: help install test-inference test-backend local-demo p2p-demo
 
 help:
-	@echo "ParaMind root workflow (Python 3.11)"
+	@echo "ParaMind root workflow (Python)"
 	@echo ""
 	@echo "  make install         # $(PYTHON) -m pip install -r requirements.txt"
 	@echo "  make test-inference  # $(PYTHON) -m pytest test/inference -v"

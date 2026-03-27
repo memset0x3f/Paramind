@@ -93,7 +93,9 @@ def test_qwen_output_matches_reference():
 
     model_id = "Qwen/Qwen2.5-0.5B-Instruct"
 
-    ref_model = AutoModelForCausalLM.from_pretrained(model_id).to("cpu")
+    ref_model = AutoModelForCausalLM.from_pretrained(model_id, dtype=torch.bfloat16).to(
+        "cpu"
+    )
     input_ids = torch.tensor([[1, 2, 3]], dtype=torch.long)
     with torch.no_grad():
         ref_logits = ref_model(input_ids).logits
@@ -110,6 +112,7 @@ def test_qwen_output_matches_reference():
         dist_logits, _ = s2.forward(h)
 
     # Allow small tolerance for bfloat16 vs reference precision
+    print(ref_logits.dtype, h.dtype, dist_logits.dtype)
     assert torch.allclose(ref_logits, dist_logits, atol=1e-2)
 
 

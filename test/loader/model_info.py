@@ -10,7 +10,7 @@ model_dir = snapshot_download("Qwen/Qwen2.5-7B-Instruct")
 # 2. 加载模型
 # 注意：为了方便看结构，这里加载到 CPU 即可
 model = AutoModelForCausalLM.from_pretrained(
-    model_dir, torch_dtype=torch.float16, device_map="cpu"  # 使用半精度模拟真实场景
+    model_dir, dtype=torch.float16, device_map="cpu"  # 使用半精度模拟真实场景
 )
 
 config = AutoConfig.from_pretrained(model_dir)

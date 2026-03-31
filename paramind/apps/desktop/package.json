@@ -11,7 +11,11 @@
     "build:linux": "electron-builder --linux",
     "dist": "npm run build",
     "pack": "electron-builder --dir",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "test:renderer": "node --test ../../../test/backend/test_renderer_harness.mjs",
+    "harness:serve": "cd renderer && python3 -m http.server 4173",
+    "test:playwright": "npx playwright test test_renderer_harness.spec.mjs",
+    "test:frontend-fast": "node --test ../../../test/backend/test_chat_state.mjs && node --test ../../../test/backend/test_renderer_harness.mjs && npx playwright test test_renderer_harness.spec.mjs"
   },
   "author": "Your Name",
   "license": "MIT",
@@ -84,6 +88,7 @@
     }
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "electron": "^38.0.0",
     "electron-builder": "^24.13.3"
   }

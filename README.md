@@ -21,6 +21,8 @@ Paramind/
 
 如果你是第一次进这个仓库，最常见的入口有四个：想看推理执行与 shard runtime，就从 `inference/README.md` 开始；想看调度和分配逻辑，就从 `scheduler/README.md` 开始；想看 desktop app，就从 `paramind/apps/desktop/` 开始；想跑演示，就看 `scripts/`。
 
+如果你正在改 desktop 前端，默认不要先起双 Electron。先跑 `make test-frontend-fast`，或用 `make open-frontend-harness` 打开浏览器 harness；只有 preload、真实 inference、最终双实例联调才需要 `make test-frontend-smoke`。
+
 ## 关键接口
 
 根 README 不再承担子系统 API 手册的职责；这里仅保留“从哪里进入”的接口导航。

@@ -172,6 +172,72 @@ function getConversationPreviewText(content, maxLength = 28) {
   return `${text.slice(0, Math.max(0, maxLength - 3))}...`
 }
 
+function normalizeRelationship(relationship) {
+  return {
+    peer_id: relationship?.peer_id || relationship?.peerId || '',
+    status: relationship?.status || 'none',
+    conversation_id: relationship?.conversation_id || relationship?.conversationId || null,
+    request_id: relationship?.request_id || relationship?.requestId || null,
+  }
+}
+
+function normalizeBootstrapPayload(payload = {}) {
+  const relationships = (payload.relationships || payload.peer_relationships || []).map(normalizeRelationship)
+  return {
+    activeConversationId: payload.activeConversationId || payload.active_conversation_id || null,
+    self: payload.self || null,
+    peers: [...(payload.peers || [])],
+    conversations: [...(payload.conversations || [])],
+    dmRequests: [...(payload.dmRequests || payload.dm_requests || [])],
+    groupInvitations: [...(payload.groupInvitations || payload.group_invitations || [])],
+    relationships,
+    relationshipsByPeerId: new Map(relationships.map((item) => [item.peer_id, item])),
+    latestGlobalEventId: Number(payload.latestGlobalEventId || payload.latest_global_event_id || 0),
+    latestConversationEventIds: new Map(Object.entries(payload.latestConversationEventIds || payload.latest_conversation_event_ids || {})),
+  }
+}
+
+function buildSidebarCards(bootstrap) {
+  const normalized = normalizeBootstrapPayload(bootstrap)
+  const cards = []
+
+  for (const request of normalized.dmRequests) {
+    cards.push({
+      id: `request:${request.id}`,
+      kind: 'request',
+      title: 'DM request',
+      preview: 'Pending DM request',
+      updatedAt: request.updated_at || request.created_at || '',
+    })
+  }
+
+  for (const invitation of normalized.groupInvitations) {
+    cards.push({
+      id: `invite:${invitation.id}`,
+      kind: 'invitation',
+      title: invitation.title || 'Group invitation',
+      preview: 'Pending group invitation',
+      updatedAt: invitation.updated_at || invitation.created_at || '',
+    })
+  }
+
+  for (const conversation of normalized.conversations) {
+    cards.push({
+      id: conversation.id,
+      kind: 'conversation',
+      title: conversation.title || conversation.id,
+      preview: getConversationPreviewText(conversation.last_message?.content || ''),
+      updatedAt: conversation.updated_at || '',
+    })
+  }
+
+  return cards.sort((a, b) => {
+    const byTime = String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''))
+    if (byTime !== 0) return byTime
+    return String(a.id).localeCompare(String(b.id))
+  })
+}
+
 function getUserTimeZone() {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined
@@ -250,6 +316,134 @@ function resolvePostDmRequestSelection({
   }
 
   return { nextConversationId: null, force: true }
+}
+
+function upsertById(items, nextItem) {
+  const nextItems = items.slice()
+  const index = nextItems.findIndex((item) => item.id === nextItem.id)
+  if (index >= 0) {
+    nextItems[index] = { ...nextItems[index], ...nextItem }
+  } else {
+    nextItems.push(nextItem)
+  }
+  return nextItems
+}
+
+function cloneBootstrapViewModel(viewModel) {
+  const normalized = normalizeBootstrapPayload(viewModel)
+  return {
+    ...normalized,
+    peers: normalized.peers.map((item) => ({ ...item })),
+    conversations: normalized.conversations.map((item) => ({ ...item })),
+    dmRequests: normalized.dmRequests.map((item) => ({ ...item })),
+    groupInvitations: normalized.groupInvitations.map((item) => ({ ...item })),
+    relationships: normalized.relationships.map((item) => ({ ...item })),
+    relationshipsByPeerId: new Map(normalized.relationshipsByPeerId),
+  }
+}
+
+function applyGlobalEvent(viewModel, event) {
+  const next = cloneBootstrapViewModel(viewModel)
+  const requestId = event?.payload?.request_id || event?.payload?.request?.id || event?.entity_id || null
+  const conversation = event?.payload?.conversation || null
+  const relationship = event?.payload?.relationship ? normalizeRelationship(event.payload.relationship) : null
+
+  switch (event?.type) {
+    case 'peer.joined':
+    case 'peer.updated': {
+      const peer = event.payload?.peer
+      if (peer?.id) {
+        next.peers = upsertById(next.peers, peer)
+      }
+      break
+    }
+    case 'peer.left': {
+      const peerId = event.payload?.peer?.id || event.entity_id
+      next.peers = next.peers.filter((item) => item.id !== peerId)
+      break
+    }
+    case 'conversation.created':
+    case 'conversation.updated':
+      if (conversation?.id) {
+        next.conversations = upsertById(next.conversations, conversation)
+      }
+      break
+    case 'conversation.deleted': {
+      const conversationId = conversation?.id || event.payload?.conversation_id || event.entity_id
+      next.conversations = next.conversations.filter((item) => item.id !== conversationId)
+      if (next.activeConversationId === conversationId) {
+        next.activeConversationId = null
+      }
+      break
+    }
+    case 'dm.requested': {
+      const request = event.payload?.request
+      if (request?.id) {
+        next.dmRequests = upsertById(next.dmRequests, request)
+      }
+      if (relationship?.peer_id) {
+        next.relationshipsByPeerId.set(relationship.peer_id, relationship)
+      }
+      break
+    }
+    case 'dm.accepted': {
+      next.dmRequests = next.dmRequests.filter((item) => item.id !== requestId)
+      if (conversation?.id) {
+        next.conversations = upsertById(next.conversations, conversation)
+      }
+      if (relationship?.peer_id) {
+        next.relationshipsByPeerId.set(relationship.peer_id, relationship)
+      }
+      const selection = resolvePostDmRequestSelection({
+        action: 'accept',
+        wasViewingRequest: next.activeConversationId === `request:${requestId}`,
+        resolvedConversationId: conversation?.id || relationship?.conversation_id || null,
+        fallbackConversationId: next.activeConversationId,
+      })
+      if (selection.force) {
+        next.activeConversationId = selection.nextConversationId
+      }
+      break
+    }
+    case 'dm.rejected': {
+      next.dmRequests = next.dmRequests.filter((item) => item.id !== requestId)
+      if (relationship?.peer_id) {
+        next.relationshipsByPeerId.set(relationship.peer_id, relationship)
+      }
+      const selection = resolvePostDmRequestSelection({
+        action: 'reject',
+        wasViewingRequest: next.activeConversationId === `request:${requestId}`,
+        resolvedConversationId: null,
+        fallbackConversationId: next.activeConversationId,
+      })
+      if (selection.force) {
+        next.activeConversationId = selection.nextConversationId
+      }
+      break
+    }
+    case 'group.invited': {
+      const invitation = event.payload?.invitation
+      if (invitation?.id) {
+        next.groupInvitations = upsertById(next.groupInvitations, invitation)
+      }
+      break
+    }
+    case 'group.accepted':
+    case 'group.rejected': {
+      const invitationId = event.payload?.invitation_id || event.payload?.invitation?.id || event.entity_id
+      next.groupInvitations = next.groupInvitations.filter((item) => item.id !== invitationId)
+      if (conversation?.id && event.type === 'group.accepted') {
+        next.conversations = upsertById(next.conversations, conversation)
+      }
+      break
+    }
+    default:
+      break
+  }
+
+  next.relationships = Array.from(next.relationshipsByPeerId.values())
+  next.conversations.sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')) || String(a.id).localeCompare(String(b.id)))
+  return next
 }
 
 function normalizeMessage(message) {
@@ -504,6 +698,10 @@ function getLatestRetryableUserMessage(state, conversationId) {
 
 const chatStateApi = {
   createChatState,
+  normalizeBootstrapPayload,
+  buildSidebarCards,
+  applyGlobalEvent,
+  applyConversationEvent: reduceEvent,
   reduceEvent,
   markConversationRead,
   getLatestRetryableUserMessage,

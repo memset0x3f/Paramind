@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="refresh" content="0; url=./index.html?harness=1" />
+    <title>ParaMind Renderer Harness</title>
+    <script>
+      const target = new URL('./index.html', window.location.href)
+      const params = new URLSearchParams(window.location.search)
+      params.set('harness', '1')
+      target.search = params.toString()
+      window.location.replace(target.toString())
+    </script>
+  </head>
+  <body>
+    <p>Redirecting to the ParaMind renderer harness…</p>
+  </body>
+</html>

@@ -309,6 +309,42 @@ def test_global_events_stream_pulls_remote_transport_events_without_bootstrap_po
     assert any(event_type == "dm.requested" for event_type, _ in events)
 
 
+
+def test_conversation_stream_excludes_shell_only_lifecycle_events(tmp_path):
+    coordinator_state = CoordinatorState()
+    shared_transport = _CoordinatorStateTransport(coordinator_state)
+    client_a = _make_client(
+        tmp_path,
+        "peer-a",
+        "Peer A",
+        5101,
+        settings_overrides={"p2p_transport": shared_transport},
+    )
+    client_b = _make_client(
+        tmp_path,
+        "peer-b",
+        "Peer B",
+        5102,
+        settings_overrides={"p2p_transport": shared_transport},
+    )
+
+    general_id = client_b.get("/api/bootstrap").json()["conversations"][0]["id"]
+    created = client_a.post("/api/dm/requests", json={"target_peer_id": "peer-b"})
+    assert created.status_code == 201
+
+    deadline = time.time() + 1.0
+    events = []
+    while time.time() < deadline:
+        stream_response = client_b.get(f"/api/conversations/{general_id}/stream", params={"after": 0, "limit": 128})
+        assert stream_response.status_code == 200
+        events = _event_types(stream_response.text)
+        if events:
+            break
+        time.sleep(0.05)
+
+    assert all(event_type != "dm.requested" for event_type, _ in events)
+
+
 def test_dm_request_accept_flow_creates_single_dm_conversation(tmp_path):
     coordinator_state = CoordinatorState()
     shared_transport = _CoordinatorStateTransport(coordinator_state)

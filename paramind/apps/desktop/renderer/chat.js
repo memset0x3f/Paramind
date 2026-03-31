@@ -1,6 +1,18 @@
-const API_BASE = window.electronAPI?.getBackendUrl?.() || 'http://127.0.0.1:5001'
-const INSTANCE_META = window.electronAPI?.getInstanceMeta?.() || {}
-const CHAT_STATE = window.ParaMindChatState || null
+const runtimeWindow = typeof window !== 'undefined' ? window : null
+const runtimeDocument = typeof document !== 'undefined' ? document : null
+
+function resolveRuntimeConfig(windowLike = runtimeWindow) {
+  return {
+    apiBase: windowLike?.electronAPI?.getBackendUrl?.() || 'http://127.0.0.1:5001',
+    instanceMeta: windowLike?.electronAPI?.getInstanceMeta?.() || {},
+    chatStateApi: windowLike?.ParaMindChatState || null,
+  }
+}
+
+const RUNTIME_CONFIG = resolveRuntimeConfig(runtimeWindow)
+const API_BASE = RUNTIME_CONFIG.apiBase
+const INSTANCE_META = RUNTIME_CONFIG.instanceMeta
+const CHAT_STATE = RUNTIME_CONFIG.chatStateApi || (typeof require === 'function' ? require('./chat_state.js') : null)
 
 const SCROLL_THRESHOLD_PX = 50
 
@@ -42,9 +54,9 @@ const state = {
   renderedDiagnosticsSignature: null,
 }
 
-let chatState = CHAT_STATE.createChatState()
+let chatState = CHAT_STATE?.createChatState ? CHAT_STATE.createChatState() : null
 
-const $ = (id) => document.getElementById(id)
+const $ = (id) => runtimeDocument?.getElementById(id)
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -2043,13 +2055,21 @@ async function init() {
   state.bootstrapRefreshTimer = null
 }
 
-window.addEventListener('beforeunload', () => {
-  if (state.activeStreamAbort) state.activeStreamAbort.abort()
-  if (state.activeGlobalStreamAbort) state.activeGlobalStreamAbort.abort()
-  if (state.bootstrapRefreshTimer) clearInterval(state.bootstrapRefreshTimer)
-})
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    resolveRuntimeConfig,
+  }
+}
 
-init().catch((error) => {
-  console.error(error)
-  setComposerStatus(error.message)
-})
+if (runtimeWindow && runtimeDocument) {
+  runtimeWindow.addEventListener('beforeunload', () => {
+    if (state.activeStreamAbort) state.activeStreamAbort.abort()
+    if (state.activeGlobalStreamAbort) state.activeGlobalStreamAbort.abort()
+    if (state.bootstrapRefreshTimer) clearInterval(state.bootstrapRefreshTimer)
+  })
+
+  init().catch((error) => {
+    console.error(error)
+    setComposerStatus(error.message)
+  })
+}

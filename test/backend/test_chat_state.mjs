@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { createRequire } from 'node:module'
+
+const require = createRequire(import.meta.url)
+const chatRenderer = require('../../paramind/apps/desktop/renderer/chat.js')
+
 import chatState from '../../paramind/apps/desktop/renderer/chat_state.js'
 
 test('maps job and peer events into synthetic system messages', () => {
@@ -436,5 +441,165 @@ test('resolves post request navigation without leaving stale request selected', 
       fallbackConversationId: 'general',
     }),
     { nextConversationId: 'general', force: true },
+  )
+})
+
+
+test('normalizes bootstrap payloads into stable sidebar cards', () => {
+  const bootstrap = chatState.normalizeBootstrapPayload({
+    active_conversation_id: 'general',
+    conversations: [
+      {
+        id: 'general',
+        title: 'General',
+        kind: 'group',
+        updated_at: '2026-03-31T09:00:00Z',
+        last_message: { id: 'm1', content: 'A somewhat longer preview than the card should show' },
+      },
+    ],
+    dm_requests: [
+      {
+        id: 'req-1',
+        requester_id: 'peer-b',
+        target_peer_id: 'peer-a',
+        direction: 'inbound',
+        status: 'pending',
+        created_at: '2026-03-31T09:05:00Z',
+        updated_at: '2026-03-31T09:05:00Z',
+      },
+    ],
+  })
+
+  assert.deepEqual(chatState.buildSidebarCards(bootstrap), [
+    {
+      id: 'request:req-1',
+      kind: 'request',
+      title: 'DM request',
+      preview: 'Pending DM request',
+      updatedAt: '2026-03-31T09:05:00Z',
+    },
+    {
+      id: 'general',
+      kind: 'conversation',
+      title: 'General',
+      preview: chatState.getConversationPreviewText('A somewhat longer preview than the card should show'),
+      updatedAt: '2026-03-31T09:00:00Z',
+    },
+  ])
+})
+
+test('applies global lifecycle events without requiring electron runtime state', () => {
+  const bootstrap = chatState.normalizeBootstrapPayload({
+    active_conversation_id: 'request:req-1',
+    dm_requests: [
+      {
+        id: 'req-1',
+        requester_id: 'peer-a',
+        target_peer_id: 'peer-b',
+        direction: 'outbound',
+        status: 'pending',
+        created_at: '2026-03-31T09:00:00Z',
+        updated_at: '2026-03-31T09:00:00Z',
+      },
+    ],
+    peer_relationships: [
+      { peer_id: 'peer-b', status: 'outbound_pending_dm', conversation_id: null, request_id: 'req-1' },
+    ],
+  })
+
+  const next = chatState.applyGlobalEvent(bootstrap, {
+    type: 'dm.accepted',
+    payload: {
+      request_id: 'req-1',
+      conversation: {
+        id: 'dm:peer-a-peer-b',
+        title: 'Peer B',
+        kind: 'dm',
+        updated_at: '2026-03-31T09:01:00Z',
+        participant_ids: ['peer-a', 'peer-b'],
+      },
+      relationship: {
+        peer_id: 'peer-b',
+        status: 'active_dm',
+        conversation_id: 'dm:peer-a-peer-b',
+        request_id: null,
+      },
+    },
+  })
+
+  assert.equal(next.activeConversationId, 'dm:peer-a-peer-b')
+  assert.equal(next.dmRequests.length, 0)
+  assert.equal(next.relationshipsByPeerId.get('peer-b').status, 'active_dm')
+  assert.equal(next.conversations[0].id, 'dm:peer-a-peer-b')
+})
+
+test('conversation event helpers only update the targeted draft message', () => {
+  let state = chatState.createChatState({ activeConversationId: 'general' })
+  state = chatState.applyConversationEvent(state, {
+    id: 1,
+    type: 'message.created',
+    conversation_id: 'general',
+    entity_id: 'draft-1',
+    payload: {
+      message: {
+        id: 'draft-1',
+        conversation_id: 'general',
+        role: 'assistant',
+        sender_name: 'AI',
+        content: '',
+        status: 'streaming',
+        metadata: { local_draft: true },
+        created_at: '2026-03-31T09:00:00Z',
+        updated_at: '2026-03-31T09:00:00Z',
+      },
+    },
+  })
+  state = chatState.applyConversationEvent(state, {
+    id: 2,
+    type: 'message.created',
+    conversation_id: 'general',
+    entity_id: 'draft-2',
+    payload: {
+      message: {
+        id: 'draft-2',
+        conversation_id: 'general',
+        role: 'assistant',
+        sender_name: 'AI',
+        content: '',
+        status: 'streaming',
+        metadata: { local_draft: true },
+        created_at: '2026-03-31T09:00:01Z',
+        updated_at: '2026-03-31T09:00:01Z',
+      },
+    },
+  })
+
+  const next = chatState.applyConversationEvent(state, {
+    id: 3,
+    type: 'message.token',
+    conversation_id: 'general',
+    entity_id: 'draft-2',
+    payload: { message_id: 'draft-2', token: 'hello' },
+  })
+
+  const messages = next.messagesByConversation.get('general')
+  assert.equal(messages.find((item) => item.id === 'draft-1').content, '')
+  assert.equal(messages.find((item) => item.id === 'draft-2').content, 'hello')
+})
+
+test('reads runtime config from fake electron api without needing a real window', () => {
+  assert.deepEqual(
+    chatRenderer.resolveRuntimeConfig({
+      electronAPI: {
+        getBackendUrl: () => 'http://127.0.0.1:5999',
+        getInstanceMeta: () => ({ id: 'peer-test', display_name: 'Peer Test' }),
+      },
+      ParaMindChatState: chatState,
+    }),
+    {
+      apiBase: 'http://127.0.0.1:5999',
+      instanceMeta: { id: 'peer-test', display_name: 'Peer Test' },
+      chatStateApi: chatState,
+    },
   )
 })

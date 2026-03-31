@@ -1,7 +1,7 @@
 import pytest
 
-from inference.ClusterCoordinator import ClusterCoordinator
-from inference.ClusterTypes import (
+from scheduler.ClusterCoordinator import ClusterCoordinator
+from scheduler.ClusterTypes import (
     NodeProfile,
     NodeReconfigurationAction,
     ReconfigurationPlan,

@@ -1,4 +1,4 @@
-from inference.ClusterTypes import (
+from scheduler.ClusterTypes import (
     NodeReconfigurationAction,
     ReconfigurationPlan,
     ShardAssignment,

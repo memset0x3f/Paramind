@@ -3,12 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 
-from inference.ClusterTypes import (
+from scheduler.ClusterTypes import (
     NodeReconfigurationAction,
     PlacementPlan,
     ShardAssignment,
 )
-from inference.NodeInventory import NodeState, normalize_node_state
+from scheduler.NodeInventory import NodeState, normalize_node_state
 
 FIRST_LAST_ROLE_PENALTY = 1.0
 MEMORY_PRESSURE_WEIGHT = 0.2

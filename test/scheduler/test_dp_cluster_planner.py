@@ -1,5 +1,5 @@
-from inference.ClusterPlanner import plan_static_distribution, replan_distribution
-from inference.NodeInventory import NodeState
+from scheduler.ClusterPlanner import plan_static_distribution, replan_distribution
+from scheduler.NodeInventory import NodeState
 
 
 def _assert_contiguous_cover(plan, total_layers):

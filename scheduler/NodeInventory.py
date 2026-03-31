@@ -10,7 +10,7 @@ import subprocess
 
 import torch
 
-from inference.ClusterTypes import NodeProfile
+from scheduler.ClusterTypes import NodeProfile
 
 
 def _detect_device_type() -> str:

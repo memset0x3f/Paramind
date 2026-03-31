@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import math
 
-from inference.ClusterTypes import NodeProfile
-from inference.NodeInventory import (
+from scheduler.ClusterTypes import NodeProfile
+from scheduler.NodeInventory import (
     NodeState,
     _detect_device_type,
     _detect_memory_gb as _inventory_detect_memory_gb,

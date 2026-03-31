@@ -1,9 +1,9 @@
-from inference.ClusterCoordinator import ClusterCoordinator
-from inference.ClusterTypes import NodeProfile
+from scheduler.ClusterCoordinator import ClusterCoordinator
+from scheduler.ClusterTypes import NodeProfile
 
 
 def test_reconfiguration_action_round_trip_preserves_action_fields():
-    from inference.ClusterTypes import NodeReconfigurationAction
+    from scheduler.ClusterTypes import NodeReconfigurationAction
 
     action = NodeReconfigurationAction(
         node_id="node-c",
@@ -20,7 +20,7 @@ def test_reconfiguration_action_round_trip_preserves_action_fields():
 
 
 def test_reconfiguration_plan_groups_actions_by_node():
-    from inference.ClusterTypes import NodeReconfigurationAction, ReconfigurationPlan
+    from scheduler.ClusterTypes import NodeReconfigurationAction, ReconfigurationPlan
 
     plan = ReconfigurationPlan(
         model_id="Qwen/Qwen2.5-0.5B-Instruct",
@@ -40,8 +40,8 @@ def test_reconfiguration_plan_groups_actions_by_node():
 
 
 def test_diff_assignment_changes_marks_keep_move_in_and_unload():
-    from inference.ClusterPlanner import diff_assignment_changes
-    from inference.ClusterTypes import PlacementPlan, ShardAssignment
+    from scheduler.ClusterPlanner import diff_assignment_changes
+    from scheduler.ClusterTypes import PlacementPlan, ShardAssignment
 
     current = PlacementPlan(
         model_id="Qwen/Qwen2.5-0.5B-Instruct",
@@ -69,8 +69,8 @@ def test_diff_assignment_changes_marks_keep_move_in_and_unload():
 
 
 def test_diff_assignment_changes_marks_load_when_new_owner_has_no_source():
-    from inference.ClusterPlanner import diff_assignment_changes
-    from inference.ClusterTypes import PlacementPlan, ShardAssignment
+    from scheduler.ClusterPlanner import diff_assignment_changes
+    from scheduler.ClusterTypes import PlacementPlan, ShardAssignment
 
     current = PlacementPlan(
         model_id="Qwen/Qwen2.5-0.5B-Instruct",
@@ -92,7 +92,7 @@ def test_diff_assignment_changes_marks_load_when_new_owner_has_no_source():
 
 
 def test_coordinator_builds_reconfiguration_plan_after_replan():
-    from inference.ClusterTypes import ReconfigurationPlan
+    from scheduler.ClusterTypes import ReconfigurationPlan
 
     coordinator = ClusterCoordinator(
         transport=None,

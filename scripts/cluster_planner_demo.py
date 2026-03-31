@@ -8,7 +8,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from inference.ClusterPlanner import (
+from scheduler.ClusterPlanner import (
     choose_coordinator,
     coordinator_score,
     estimate_reference_stage_width,
@@ -16,8 +16,8 @@ from inference.ClusterPlanner import (
     plan_static_distribution,
     replan_distribution,
 )
-from inference.ClusterTypes import NodeProfile, PlacementPlan
-from inference.NodeInventory import normalize_node_state
+from scheduler.ClusterTypes import NodeProfile, PlacementPlan
+from scheduler.NodeInventory import normalize_node_state
 from scripts.demo_rendering import render_key_value_block, render_section, render_table
 
 MODEL_ID = "Qwen/Qwen2.5-0.5B-Instruct"

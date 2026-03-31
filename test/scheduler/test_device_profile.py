@@ -1,11 +1,11 @@
-from inference.DeviceProfile import build_node_profile
-from inference.ClusterTypes import NodeProfile
+from scheduler.DeviceProfile import build_node_profile
+from scheduler.ClusterTypes import NodeProfile
 
 
 def test_build_node_profile_returns_capacity_fields(monkeypatch):
-    monkeypatch.setattr("inference.DeviceProfile._detect_device", lambda: "cpu")
+    monkeypatch.setattr("scheduler.DeviceProfile._detect_device", lambda: "cpu")
     monkeypatch.setattr(
-        "inference.DeviceProfile._detect_memory_gb", lambda: (16.0, 10.5)
+        "scheduler.DeviceProfile._detect_memory_gb", lambda: (16.0, 10.5)
     )
 
     profile = build_node_profile(
@@ -20,9 +20,9 @@ def test_build_node_profile_returns_capacity_fields(monkeypatch):
 
 
 def test_node_profile_payload_round_trip(monkeypatch):
-    monkeypatch.setattr("inference.DeviceProfile._detect_device", lambda: "cpu")
+    monkeypatch.setattr("scheduler.DeviceProfile._detect_device", lambda: "cpu")
     monkeypatch.setattr(
-        "inference.DeviceProfile._detect_memory_gb", lambda: (16.0, 10.5)
+        "scheduler.DeviceProfile._detect_memory_gb", lambda: (16.0, 10.5)
     )
 
     profile = build_node_profile(

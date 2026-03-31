@@ -1,12 +1,12 @@
-from inference.ClusterPlanner import (
+from scheduler.ClusterPlanner import (
     _arrange_nodes_for_pipeline,
     choose_coordinator,
     coordinator_score,
     estimate_reference_stage_width,
     estimate_stage_time_for_node,
 )
-from inference.ClusterTypes import PlacementPlan, ShardAssignment
-from inference.NodeInventory import NodeState
+from scheduler.ClusterTypes import PlacementPlan, ShardAssignment
+from scheduler.NodeInventory import NodeState
 
 
 def _node(node_id: str, speed: float, capacity: int, free_memory_gb: float = 32.0):

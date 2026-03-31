@@ -4,18 +4,18 @@ from dataclasses import asdict
 import itertools
 import time
 
-from inference.ClusterPlanner import (
+from scheduler.ClusterPlanner import (
     diff_assignment_changes,
     plan_static_distribution,
     replan_distribution,
 )
-from inference.ClusterTypes import (
+from scheduler.ClusterTypes import (
     NodeProfile,
     NodeReconfigurationAction,
     PlacementPlan,
     ReconfigurationPlan,
 )
-from inference.NodeInventory import NodeState
+from scheduler.NodeInventory import NodeState
 
 
 class ClusterCoordinator:

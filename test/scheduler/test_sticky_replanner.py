@@ -1,9 +1,9 @@
-from inference.ClusterPlanner import (
+from scheduler.ClusterPlanner import (
     estimate_assignment_cost,
     replan_distribution,
     score_assignment_move_cost,
 )
-from inference.ClusterTypes import NodeProfile, PlacementPlan, ShardAssignment
+from scheduler.ClusterTypes import NodeProfile, PlacementPlan, ShardAssignment
 
 
 def _assert_contiguous_cover(plan, total_layers):

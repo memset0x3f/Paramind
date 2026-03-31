@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from typing import Any, Callable, Optional
 
-from .ClusterTypes import NodeReconfigurationAction, ShardAssignment
+from scheduler.ClusterTypes import NodeReconfigurationAction, ShardAssignment
 from .ShardConfig import ModelFamily, ShardConfig
 from .ShardRegistry import ShardRecord, ShardRegistry
 from .ShardLoader import ShardLoader

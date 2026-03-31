@@ -1,6 +1,6 @@
 import json
 
-from inference.NodeInventory import NodeState
+from scheduler.NodeInventory import NodeState
 from scripts import scan_local_hardware
 
 

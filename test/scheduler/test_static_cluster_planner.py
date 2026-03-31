@@ -1,5 +1,5 @@
-from inference.ClusterTypes import NodeProfile, ShardAssignment, PlacementPlan
-from inference.ClusterPlanner import choose_coordinator, plan_static_distribution
+from scheduler.ClusterTypes import NodeProfile, ShardAssignment, PlacementPlan
+from scheduler.ClusterPlanner import choose_coordinator, plan_static_distribution
 
 
 def test_placement_plan_preserves_layer_order():

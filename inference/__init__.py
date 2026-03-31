@@ -25,83 +25,83 @@ def __getattr__(name):
 
         return DistributedInferenceEngine
     if name == "NodeProfile":
-        from .ClusterTypes import NodeProfile
+        from scheduler.ClusterTypes import NodeProfile
 
         return NodeProfile
     if name == "NodeState":
-        from .NodeInventory import NodeState
+        from scheduler.NodeInventory import NodeState
 
         return NodeState
     if name == "ClusterState":
-        from .NodeInventory import ClusterState
+        from scheduler.NodeInventory import ClusterState
 
         return ClusterState
     if name == "ShardAssignment":
-        from .ClusterTypes import ShardAssignment
+        from scheduler.ClusterTypes import ShardAssignment
 
         return ShardAssignment
     if name == "PlacementPlan":
-        from .ClusterTypes import PlacementPlan
+        from scheduler.ClusterTypes import PlacementPlan
 
         return PlacementPlan
     if name == "NodeReconfigurationAction":
-        from .ClusterTypes import NodeReconfigurationAction
+        from scheduler.ClusterTypes import NodeReconfigurationAction
 
         return NodeReconfigurationAction
     if name == "ReconfigurationPlan":
-        from .ClusterTypes import ReconfigurationPlan
+        from scheduler.ClusterTypes import ReconfigurationPlan
 
         return ReconfigurationPlan
     if name == "build_node_profile":
-        from .DeviceProfile import build_node_profile
+        from scheduler.DeviceProfile import build_node_profile
 
         return build_node_profile
     if name == "snapshot_local_node_profile":
-        from .DeviceProfile import snapshot_local_node_profile
+        from scheduler.DeviceProfile import snapshot_local_node_profile
 
         return snapshot_local_node_profile
     if name == "build_node_state":
-        from .NodeInventory import build_node_state
+        from scheduler.NodeInventory import build_node_state
 
         return build_node_state
     if name == "snapshot_local_node_state":
-        from .DeviceProfile import snapshot_local_node_state
+        from scheduler.DeviceProfile import snapshot_local_node_state
 
         return snapshot_local_node_state
     if name == "choose_coordinator":
-        from .ClusterPlanner import choose_coordinator
+        from scheduler.ClusterPlanner import choose_coordinator
 
         return choose_coordinator
     if name == "coordinator_score":
-        from .ClusterPlanner import coordinator_score
+        from scheduler.ClusterPlanner import coordinator_score
 
         return coordinator_score
     if name == "estimate_reference_stage_width":
-        from .ClusterPlanner import estimate_reference_stage_width
+        from scheduler.ClusterPlanner import estimate_reference_stage_width
 
         return estimate_reference_stage_width
     if name == "estimate_stage_time_for_node":
-        from .ClusterPlanner import estimate_stage_time_for_node
+        from scheduler.ClusterPlanner import estimate_stage_time_for_node
 
         return estimate_stage_time_for_node
     if name == "plan_static_distribution":
-        from .ClusterPlanner import plan_static_distribution
+        from scheduler.ClusterPlanner import plan_static_distribution
 
         return plan_static_distribution
     if name == "score_assignment_move_cost":
-        from .ClusterPlanner import score_assignment_move_cost
+        from scheduler.ClusterPlanner import score_assignment_move_cost
 
         return score_assignment_move_cost
     if name == "replan_distribution":
-        from .ClusterPlanner import replan_distribution
+        from scheduler.ClusterPlanner import replan_distribution
 
         return replan_distribution
     if name == "diff_assignment_changes":
-        from .ClusterPlanner import diff_assignment_changes
+        from scheduler.ClusterPlanner import diff_assignment_changes
 
         return diff_assignment_changes
     if name == "ClusterCoordinator":
-        from .ClusterCoordinator import ClusterCoordinator
+        from scheduler.ClusterCoordinator import ClusterCoordinator
 
         return ClusterCoordinator
     if name == "NodeRuntime":

@@ -2,7 +2,7 @@ import sys
 
 import pytest
 
-from inference.NodeInventory import (
+from scheduler.NodeInventory import (
     NodeState,
     _detect_windows_memory_gb,
     _parse_darwin_vm_stat,
@@ -130,12 +130,12 @@ def test_detect_windows_memory_gb_reports_physical_ram():
 
 
 def test_build_node_state_cpu_snapshot_can_report_positive_capacity(monkeypatch):
-    monkeypatch.setattr("inference.NodeInventory._detect_device_type", lambda: "cpu")
+    monkeypatch.setattr("scheduler.NodeInventory._detect_device_type", lambda: "cpu")
     monkeypatch.setattr(
-        "inference.NodeInventory._detect_memory_gb", lambda: (36.0, 15.5)
+        "scheduler.NodeInventory._detect_memory_gb", lambda: (36.0, 15.5)
     )
     monkeypatch.setattr(
-        "inference.NodeInventory.benchmark_block_speed", lambda device_type: 8.0
+        "scheduler.NodeInventory.benchmark_block_speed", lambda device_type: 8.0
     )
 
     node = build_node_state(
@@ -151,12 +151,12 @@ def test_build_node_state_cpu_snapshot_can_report_positive_capacity(monkeypatch)
 
 
 def test_build_node_state_uses_snapshot_and_benchmark(monkeypatch):
-    monkeypatch.setattr("inference.NodeInventory._detect_device_type", lambda: "cuda")
+    monkeypatch.setattr("scheduler.NodeInventory._detect_device_type", lambda: "cuda")
     monkeypatch.setattr(
-        "inference.NodeInventory._detect_memory_gb", lambda: (64.0, 48.0)
+        "scheduler.NodeInventory._detect_memory_gb", lambda: (64.0, 48.0)
     )
     monkeypatch.setattr(
-        "inference.NodeInventory.benchmark_block_speed", lambda device_type: 80.0
+        "scheduler.NodeInventory.benchmark_block_speed", lambda device_type: 80.0
     )
 
     node = build_node_state(

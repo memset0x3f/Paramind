@@ -75,6 +75,14 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;')
 }
 
+function renderMarkdown(content) {
+  if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
+    return escapeHtml(content)
+  }
+  const raw = marked.parse(String(content || ''), { breaks: true, gfm: true })
+  return DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } })
+}
+
 async function callApi(path, options = {}) {
   const response = await fetch(`${state.apiBase}${path}`, {
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
@@ -746,7 +754,7 @@ function renderDraftCard(message, conversationId) {
         >${escapeHtml(editState.content || '')}</textarea>
       </div>
     `
-    : `<div class="message-card draft-card" data-message-content="${escapeHtml(message.id)}">${escapeHtml(message.content || '生成中…')}</div>`
+    : `<div class="message-card draft-card prose" data-message-content="${escapeHtml(message.id)}">${renderMarkdown(message.content || '生成中…')}</div>`
   const actions = editState
     ? `
       <div class="draft-actions">
@@ -978,7 +986,7 @@ function renderBaseMessageCard(message, cssRole, content, actions = '') {
           <span class="status-pill status-${escapeHtml(statusTone)}" data-message-status="${escapeHtml(message.id)}">${escapeHtml(CHAT_STATE.getDisplayStatus(message))}</span>
           <span data-message-time="${escapeHtml(message.id)}">${escapeHtml(time)}</span>
         </div>
-        <div class="message-card" data-message-content="${escapeHtml(message.id)}">${escapeHtml(content)}</div>
+        <div class="message-card prose" data-message-content="${escapeHtml(message.id)}">${renderMarkdown(content)}</div>
         <div data-message-actions="${escapeHtml(message.id)}">${actions}</div>
       </div>
     </div>

@@ -682,3 +682,39 @@ test('leaving a non-general group removes it locally and returns to the fallback
   await expect(page.locator('#roomTitle')).toHaveText('General')
   await expect(page.locator('#conversationList')).not.toContainText('Project Alpha')
 })
+
+test('marked.js and DOMPurify are loaded and render markdown bold and inline code in AI messages', async ({ page }) => {
+  await openHarness(page, 'ai_streaming_draft')
+
+  const markedLoaded = await page.evaluate(() => typeof window.marked !== 'undefined')
+  const purifyLoaded = await page.evaluate(() => typeof window.DOMPurify !== 'undefined')
+  expect(markedLoaded).toBe(true)
+  expect(purifyLoaded).toBe(true)
+
+  const draftId = 'draft-1'
+  await page.evaluate((id) => {
+    window.ParaMindHarness.emitConversationEvent({
+      type: 'message.updated',
+      conversation_id: 'general',
+      entity_id: id,
+      payload: {
+        message: {
+          id,
+          conversation_id: 'general',
+          sender_id: 'assistant',
+          sender_name: 'AI',
+          role: 'assistant',
+          status: 'completed',
+          content: '**bold** and `code`',
+          metadata: { local_draft: true },
+          created_at: '2026-04-01T09:02:00Z',
+          updated_at: '2026-04-01T09:03:00Z',
+        },
+      },
+    })
+  }, draftId)
+
+  const cardHtml = await page.locator(`[data-message-id="${draftId}"] [data-message-content="${draftId}"]`).innerHTML()
+  expect(cardHtml).toContain('<strong>')
+  expect(cardHtml).toContain('<code>')
+})

@@ -392,6 +392,48 @@
         white-space: pre-wrap;
         word-break: break-word;
       }
+      /* Markdown prose inside message cards */
+      .message-card.prose { white-space: normal; }
+      .message-card.prose p { margin: 0 0 8px; }
+      .message-card.prose p:last-child { margin-bottom: 0; }
+      .message-card.prose code {
+        font-family: var(--font-mono);
+        font-size: 12.5px;
+        background: rgba(255,255,255,.06);
+        padding: 1px 5px;
+        border-radius: 4px;
+        word-break: break-all;
+      }
+      .message-card.prose pre {
+        background: rgba(0,0,0,.35);
+        border: 1px solid var(--line-strong);
+        border-radius: 8px;
+        padding: 12px 14px;
+        overflow-x: auto;
+        margin: 8px 0;
+      }
+      .message-card.prose pre code {
+        background: none;
+        padding: 0;
+        font-size: 12.5px;
+      }
+      .message-card.prose ul, .message-card.prose ol {
+        padding-left: 20px;
+        margin: 6px 0;
+      }
+      .message-card.prose li { margin-bottom: 3px; }
+      .message-card.prose strong { color: var(--text); font-weight: 600; }
+      .message-card.prose blockquote {
+        border-left: 3px solid var(--accent-glow);
+        padding-left: 12px;
+        color: var(--muted);
+        margin: 8px 0;
+      }
+      .message-card.prose h1,.message-card.prose h2,.message-card.prose h3 {
+        font-family: var(--font-display);
+        margin: 12px 0 6px;
+        letter-spacing: -.02em;
+      }
       .message.user .message-card {
         background: var(--user-bubble);
         border-color: rgba(255,107,53,.12);
@@ -838,6 +880,8 @@
         <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/>
       </symbol>
     </svg>
+    <script src="./marked.min.js"></script>
+    <script src="./purify.min.js"></script>
   </head>
   <body>
     <div class="app">

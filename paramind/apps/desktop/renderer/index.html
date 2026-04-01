@@ -504,8 +504,10 @@
       }
       .composer textarea {
         width: 100%;
-        min-height: 96px;
-        resize: vertical;
+        min-height: 48px;
+        max-height: 320px;
+        resize: none;
+        overflow-y: auto;
         border-radius: 12px;
         border: 1px solid var(--line-strong);
         background: var(--panel-2);

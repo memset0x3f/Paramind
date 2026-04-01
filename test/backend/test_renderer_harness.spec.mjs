@@ -683,6 +683,16 @@ test('leaving a non-general group removes it locally and returns to the fallback
   await expect(page.locator('#conversationList')).not.toContainText('Project Alpha')
 })
 
+test('composer textarea auto-expands on multi-line input', async ({ page }) => {
+  await page.goto(`${baseUrl}/dev_harness.html?fixture=bootstrap_two_peers`)
+  const textarea = page.locator('#composerInput')
+  const initialHeight = await textarea.evaluate(el => el.getBoundingClientRect().height)
+  await textarea.fill('line1\nline2\nline3\nline4\nline5\nline6')
+  await textarea.dispatchEvent('input')
+  const expandedHeight = await textarea.evaluate(el => el.getBoundingClientRect().height)
+  expect(expandedHeight).toBeGreaterThan(initialHeight)
+})
+
 test('marked.js and DOMPurify are loaded and render markdown bold and inline code in AI messages', async ({ page }) => {
   await openHarness(page, 'ai_streaming_draft')
 

@@ -2057,6 +2057,7 @@ async function sendMessage(event) {
     })
     upsertMessage(userMessage)
     input.value = ''
+    $('composerInput').style.height = 'auto'
     patchMessageNode(conversation.id, userMessage)
     patchConversationSelection()
 
@@ -2549,6 +2550,16 @@ async function waitForBootstrap(retries = 20) {
 async function init() {
   bindMessageActions()
   $('composerForm').addEventListener('submit', sendMessage)
+
+  // Auto-resize textarea
+  const composerTextarea = $('composerInput')
+  if (composerTextarea) {
+    composerTextarea.addEventListener('input', () => {
+      composerTextarea.style.height = 'auto'
+      composerTextarea.style.height = `${Math.min(composerTextarea.scrollHeight, 320)}px`
+    })
+  }
+
   $('stopBtn').addEventListener('click', stopJob)
   $('retryBtn').addEventListener('click', () => retryLatestMessage())
   $('newGroupBtn').addEventListener('click', createGroupConversation)

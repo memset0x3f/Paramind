@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import http from 'node:http'
 import { fileURLToPath } from 'node:url'
@@ -43,6 +44,11 @@ test.afterAll(() => {
   serverProcess?.kill('SIGTERM')
 })
 
+async function openHarness(page, fixture) {
+  const suffix = fixture ? `?fixture=${encodeURIComponent(fixture)}` : ''
+  await page.goto(`${baseUrl}/dev_harness.html${suffix}`)
+}
+
 test('sidebar updates on global lifecycle events without booting Electron', async ({ page }) => {
   await page.goto(`${baseUrl}/dev_harness.html?fixture=bootstrap_two_peers`)
   await page.getByRole('button', { name: '请求私聊' }).click()
@@ -58,6 +64,277 @@ test('accepted dm fixture resolves to an active dm selection', async ({ page }) 
   })
   expect(activeConversationId).toBe('dm:peer-a-peer-b')
   expect(selectedConversation).toBe('dm:peer-a-peer-b')
+  await expect(page.locator('#peerList')).toContainText('退出 DM')
+})
+
+test('leaving an active dm updates local shell state immediately without waiting for a stream event', async ({ page }) => {
+  await page.goto(`${baseUrl}/dev_harness.html?fixture=accepted_dm`)
+  await expect(page.locator('#roomTitle')).toContainText('Peer B')
+  await expect(page.locator('#peerList')).toContainText('退出 DM')
+
+  await page.getByRole('button', { name: /退出 DM/ }).click()
+
+  await expect(page.locator('#roomTitle')).toContainText('General')
+  await expect(page.locator('#peerList')).toContainText('请求私聊')
+  await expect(page.locator('#conversationList')).not.toContainText('Peer B')
+})
+
+test('accepting a pending dm request leaves the request view and opens the dm without refresh', async ({ page }) => {
+  await page.goto(`${baseUrl}/dev_harness.html?fixture=pending_dm_request`)
+  await page.locator('#conversationList [data-conversation-id="request:req-1"]').click()
+  await expect(page.locator('#roomTitle')).toContainText('私聊请求')
+
+  await page.evaluate(() => {
+    window.ParaMindHarness.emitGlobalEvent({
+      type: 'dm.accepted',
+      payload: {
+        request: {
+          id: 'req-1',
+          requester_id: 'peer-a',
+          target_peer_id: 'peer-b',
+          direction: 'outbound',
+          status: 'accepted',
+          created_at: '2026-03-31T09:01:00Z',
+          updated_at: '2026-03-31T09:02:00Z',
+        },
+        conversation: {
+          id: 'dm:peer-a-peer-b',
+          title: 'Peer B',
+          kind: 'dm',
+          updated_at: '2026-03-31T09:02:00Z',
+          participant_ids: ['peer-a', 'peer-b'],
+          last_message: null,
+        },
+        relationship: {
+          peer_id: 'peer-b',
+          status: 'active_dm',
+          conversation_id: 'dm:peer-a-peer-b',
+          request_id: null,
+        },
+      },
+    })
+  })
+
+  await expect(page.locator('#conversationList')).not.toContainText('DM request')
+  await expect(page.locator('#roomTitle')).toContainText('Peer B')
+  await expect(page.locator('#roomMeta')).toContainText('dm · 2 participants')
+  await expect(page.locator('#peerList')).toContainText('退出 DM')
+})
+
+test('rejecting a pending dm request leaves the request view and restores peer action state', async ({ page }) => {
+  await page.goto(`${baseUrl}/dev_harness.html?fixture=pending_dm_request`)
+  await page.locator('#conversationList [data-conversation-id="request:req-1"]').click()
+  await expect(page.locator('#roomTitle')).toContainText('私聊请求')
+
+  await page.evaluate(() => {
+    window.ParaMindHarness.emitGlobalEvent({
+      type: 'dm.rejected',
+      payload: {
+        request: {
+          id: 'req-1',
+          requester_id: 'peer-a',
+          target_peer_id: 'peer-b',
+          direction: 'outbound',
+          status: 'rejected',
+          created_at: '2026-03-31T09:01:00Z',
+          updated_at: '2026-03-31T09:02:00Z',
+        },
+      },
+    })
+  })
+
+  await expect(page.locator('#conversationList')).not.toContainText('DM request')
+  await expect(page.locator('#roomTitle')).toContainText('General')
+  await expect(page.locator('#peerList')).toContainText('请求私聊')
+})
+
+test('active group conversation metadata updates when participant membership changes', async ({ page }) => {
+  await page.goto(`${baseUrl}/dev_harness.html?fixture=bootstrap_two_peers`)
+  await expect(page.locator('#roomMeta')).toContainText('group · 2 participants')
+
+  await page.evaluate(() => {
+    window.ParaMindHarness.emitGlobalEvent({
+      type: 'conversation.updated',
+      payload: {
+        conversation: {
+          id: 'general',
+          title: 'General',
+          kind: 'group',
+          updated_at: '2026-03-31T09:05:00Z',
+          participant_ids: ['peer-a', 'peer-b', 'peer-c'],
+          last_message: null,
+        },
+      },
+    })
+  })
+
+  await expect(page.locator('#roomMeta')).toContainText('group · 3 participants')
+})
+
+test('group accepted lifecycle event updates active group participant metadata without refresh', async ({ page }) => {
+  await page.goto(`${baseUrl}/dev_harness.html?fixture=bootstrap_two_peers`)
+  await expect(page.locator('#roomMeta')).toContainText('group · 2 participants')
+
+  await page.evaluate(() => {
+    window.ParaMindHarness.emitGlobalEvent({
+      type: 'group.accepted',
+      payload: {
+        invitation: {
+          id: 'invite-1',
+          conversation_id: 'general',
+          inviter_id: 'peer-a',
+          target_peer_id: 'peer-c',
+          title: 'General',
+          status: 'accepted',
+          direction: 'outbound',
+          created_at: '2026-03-31T09:01:00Z',
+          updated_at: '2026-03-31T09:06:00Z',
+        },
+        conversation: {
+          id: 'general',
+          title: 'General',
+          kind: 'group',
+          updated_at: '2026-03-31T09:06:00Z',
+          participant_ids: ['peer-a', 'peer-b', 'peer-c'],
+          last_message: null,
+        },
+      },
+    })
+  })
+
+  await expect(page.locator('#roomMeta')).toContainText('group · 3 participants')
+})
+
+test('general participant count tracks peer join and leave events without refresh', async ({ page }) => {
+  await page.goto(`${baseUrl}/dev_harness.html?fixture=bootstrap_two_peers`)
+  await expect(page.locator('#roomMeta')).toContainText('group · 2 participants')
+
+  await page.evaluate(() => {
+    window.ParaMindHarness.emitGlobalEvent({
+      type: 'peer.joined',
+      payload: {
+        peer: {
+          id: 'peer-c',
+          display_name: 'Peer C',
+          status: 'online',
+          backend_port: 5003,
+        },
+      },
+    })
+  })
+
+  await expect(page.locator('#roomMeta')).toContainText('group · 3 participants')
+
+  await page.evaluate(() => {
+    window.ParaMindHarness.emitGlobalEvent({
+      type: 'peer.left',
+      payload: {
+        peer: {
+          id: 'peer-c',
+          display_name: 'Peer C',
+          status: 'offline',
+          backend_port: 5003,
+        },
+      },
+      entity_id: 'peer-c',
+    })
+  })
+
+  await expect(page.locator('#roomMeta')).toContainText('group · 2 participants')
+})
+
+test('conversation preview updates do not force a shell metadata refresh', async ({ page }) => {
+  await page.goto(`${baseUrl}/dev_harness.html?fixture=bootstrap_two_peers`)
+  await expect(page.locator('#roomTitle')).toHaveText('General')
+  await expect(page.locator('#roomMeta')).toContainText('group · 2 participants')
+
+  const reuse = await page.evaluate(() => {
+    const card = document.querySelector('#conversationList .conversation[data-conversation-id="general"]')
+    const subtitle = card?.querySelector('.subtitle')
+    const title = card?.querySelector('.title')
+
+    window.ParaMindHarness.emitGlobalEvent({
+      type: 'conversation.updated',
+      payload: {
+        conversation: {
+          id: 'general',
+          title: 'General',
+          kind: 'group',
+          updated_at: '2026-03-31T09:06:00Z',
+          participant_ids: ['peer-a', 'peer-b'],
+          last_message: {
+            id: 'msg-general-2',
+            conversation_id: 'general',
+            role: 'peer',
+            sender_name: 'Peer B',
+            content: 'Preview changed only',
+            status: 'sent',
+            created_at: '2026-03-31T09:06:00Z',
+            updated_at: '2026-03-31T09:06:00Z',
+          },
+        },
+      },
+    })
+
+    const nextCard = document.querySelector('#conversationList .conversation[data-conversation-id="general"]')
+    return {
+      sameCard: card === nextCard,
+      sameSubtitleNode: subtitle === nextCard?.querySelector('.subtitle'),
+      sameTitleNode: title === nextCard?.querySelector('.title'),
+    }
+  })
+
+  assert.equal(reuse.sameCard, true)
+  assert.equal(reuse.sameSubtitleNode, true)
+  assert.equal(reuse.sameTitleNode, true)
+  await expect(page.locator('#conversationList')).toContainText('Preview changed only')
+  await expect(page.locator('#roomTitle')).toHaveText('General')
+  await expect(page.locator('#roomMeta')).toContainText('group · 2 participants')
+})
+
+test('streaming draft updates reuse the same message node and do not churn shell metadata', async ({ page }) => {
+  await openHarness(page, 'ai_streaming_draft')
+  const roomMeta = page.locator('#roomMeta')
+  await expect(roomMeta).toContainText('group · 2 participants')
+
+  const reusedNode = await page.evaluate(() => {
+    const messageId = 'draft-1'
+    const selector = `[data-message-id="${messageId}"]`
+    const beforeNode = document.querySelector(selector)
+    const beforeMeta = document.querySelector('#roomMeta')?.textContent || ''
+
+    window.ParaMindHarness.emitConversationEvent({
+      id: 999,
+      type: 'message.updated',
+      conversation_id: 'general',
+      entity_id: messageId,
+      payload: {
+        message: {
+          id: messageId,
+          conversation_id: 'general',
+          sender_id: 'assistant',
+          sender_name: 'AI',
+          role: 'assistant',
+          status: 'streaming',
+          content: '你好！很',
+          metadata: { local_draft: true },
+          created_at: '2026-03-31T14:04:27.000Z',
+          updated_at: '2026-03-31T14:04:28.000Z',
+        },
+      },
+    })
+
+    const afterNode = document.querySelector(selector)
+    const afterMeta = document.querySelector('#roomMeta')?.textContent || ''
+    return {
+      sameNode: beforeNode === afterNode,
+      sameMeta: beforeMeta === afterMeta,
+    }
+  })
+
+  assert.equal(reusedNode.sameNode, true)
+  assert.equal(reusedNode.sameMeta, true)
+  await expect(page.locator('[data-message-id="draft-1"] [data-message-content="draft-1"]')).toContainText('你好！很')
 })
 
 test('ai streaming fixture exposes draft state in the browser harness', async ({ page }) => {
@@ -66,6 +343,51 @@ test('ai streaming fixture exposes draft state in the browser harness', async ({
     const draft = window.ParaMindHarness.getMessages('general').find((item) => item.id === 'draft-1')
     return draft?.content || ''
   })).toBe('Hello')
+})
+
+test('ai draft cards edit inline and save without prompt dialogs', async ({ page }) => {
+  await openHarness(page, 'ai_streaming_draft')
+  const draftId = 'draft-1'
+  await expect(page.locator(`[data-message-id="${draftId}"] [data-message-content="${draftId}"]`)).toContainText('Hello')
+  await page.evaluate((id) => {
+    window.ParaMindHarness.emitConversationEvent({
+      type: 'message.updated',
+      conversation_id: 'general',
+      entity_id: id,
+      payload: {
+        message: {
+          id,
+          conversation_id: 'general',
+          sender_id: 'assistant',
+          sender_name: 'AI',
+          role: 'assistant',
+          status: 'completed',
+          content: '你好，原始草稿',
+          metadata: { local_draft: true },
+          created_at: '2026-03-31T09:02:00Z',
+          updated_at: '2026-03-31T09:03:00Z',
+        },
+      },
+    })
+  }, draftId)
+  await expect(page.locator(`[data-message-id="${draftId}"] [data-message-content="${draftId}"]`)).toContainText('你好，原始草稿')
+
+  const dialogs = []
+  page.on('dialog', async (dialog) => {
+    dialogs.push(dialog.message())
+    await dialog.dismiss()
+  })
+
+  await page.locator(`[data-message-id="${draftId}"] .draft-edit-btn`).click()
+
+  await expect(page.locator(`[data-message-id="${draftId}"] textarea`)).toBeVisible()
+  await expect.poll(() => dialogs.length).toBe(0)
+
+  const editor = page.locator(`[data-message-id="${draftId}"] textarea`)
+  await editor.fill('你好，已编辑草稿')
+  await page.locator(`[data-message-id="${draftId}"] .draft-save-btn`).click()
+
+  await expect(page.locator(`[data-message-id="${draftId}"] [data-message-content="${draftId}"]`)).toContainText('你好，已编辑草稿')
 })
 
 test('local ai drafts do not change the left preview until publish', async ({ page }) => {
@@ -90,4 +412,273 @@ test('local ai drafts do not change the left preview until publish', async ({ pa
   }))
 
   await expect.poll(async () => page.evaluate(() => window.ParaMindHarness.getSidebarCards()[0].preview)).toBe('Published AI answer')
+})
+
+test('existing timeline nodes are reordered when a message update changes chronological position', async ({ page }) => {
+  await page.goto(`${baseUrl}/dev_harness.html?fixture=bootstrap_two_peers`)
+  await expect(page.locator('#messageList')).toContainText('Welcome to ParaMind')
+
+  const getVisibleMessageIds = () => page.evaluate(() => {
+    const visiblePane = Array.from(document.querySelectorAll('#messageList .timeline-pane'))
+      .find((node) => !node.hidden)
+    return Array.from(visiblePane?.querySelectorAll('[data-message-id]') || []).map((node) => node.dataset.messageId)
+  })
+
+  await expect.poll(async () => await getVisibleMessageIds()).toContain('msg-general-1')
+
+  await page.evaluate(() => {
+    window.ParaMindHarness.emitConversationEvent({
+      type: 'message.created',
+      conversation_id: 'general',
+      entity_id: 'msg-late',
+      payload: {
+        message: {
+          id: 'msg-late',
+          conversation_id: 'general',
+          role: 'peer',
+          sender_name: 'Peer B',
+          content: 'late arrival',
+          status: 'sent',
+          metadata: {},
+          created_at: '2026-03-31T09:06:00Z',
+          updated_at: '2026-03-31T09:06:00Z',
+        },
+      },
+    })
+
+    window.ParaMindHarness.emitConversationEvent({
+      type: 'message.created',
+      conversation_id: 'general',
+      entity_id: 'msg-latest',
+      payload: {
+        message: {
+          id: 'msg-latest',
+          conversation_id: 'general',
+          role: 'peer',
+          sender_name: 'Peer B',
+          content: 'latest arrival',
+          status: 'sent',
+          metadata: {},
+          created_at: '2026-03-31T09:07:00Z',
+          updated_at: '2026-03-31T09:07:00Z',
+        },
+      },
+    })
+  })
+
+  await expect.poll(async () => await getVisibleMessageIds()).toEqual(['msg-general-1', 'msg-late', 'msg-latest'])
+
+  await page.evaluate(() => {
+    window.ParaMindHarness.emitConversationEvent({
+      type: 'message.updated',
+      conversation_id: 'general',
+      entity_id: 'msg-latest',
+      payload: {
+        message: {
+          id: 'msg-latest',
+          conversation_id: 'general',
+          role: 'peer',
+          sender_name: 'Peer B',
+          content: 'latest arrival',
+          status: 'sent',
+          metadata: {},
+          created_at: '2026-03-31T09:05:00Z',
+          updated_at: '2026-03-31T09:05:00Z',
+        },
+      },
+    })
+  })
+
+  await expect.poll(async () => await getVisibleMessageIds()).toEqual(['msg-general-1', 'msg-latest', 'msg-late'])
+})
+
+test('conversation and message cards do not use mount animations that cause visible flicker on updates', async ({ page }) => {
+  await page.goto(`${baseUrl}/dev_harness.html?fixture=bootstrap_two_peers`)
+  const animations = await page.evaluate(() => {
+    const conversation = document.querySelector('#conversationList .conversation')
+    const message = document.querySelector('#messageList .message')
+    return {
+      conversationAnimationName: conversation ? getComputedStyle(conversation).animationName : null,
+      messageAnimationName: message ? getComputedStyle(message).animationName : null,
+    }
+  })
+
+  expect(animations.conversationAnimationName).toBe('none')
+  expect(animations.messageAnimationName).toBe('none')
+})
+
+test('creating a group opens a peer picker and enters the created group for the creator', async ({ page }) => {
+  await page.goto(`${baseUrl}/dev_harness.html?fixture=bootstrap_two_peers`)
+
+  await page.getByRole('button', { name: '新建群聊' }).click()
+  await expect(page.locator('#groupComposerModal')).toBeVisible()
+
+  await page.locator('#groupComposerTitle').fill('Project Alpha')
+  await page.getByLabel('Peer B').check()
+  await page.getByRole('button', { name: '创建群聊' }).click()
+
+  await expect(page.locator('#roomTitle')).toHaveText('Project Alpha')
+  await expect(page.locator('#roomMeta')).toContainText('group · 1 participants')
+  await expect(page.locator('#conversationList')).toContainText('Project Alpha')
+})
+
+test('accepting a group invitation injects full history and enters the group without refresh', async ({ page }) => {
+  await page.goto(`${baseUrl}/dev_harness.html?fixture=bootstrap_two_peers`)
+
+  await page.evaluate(() => {
+    window.ParaMindHarness.setGroupAcceptResponse('invite-1', {
+      invitation: {
+        id: 'invite-1',
+        conversation_id: 'group-project-alpha',
+        inviter_id: 'peer-a',
+        target_peer_id: 'peer-b',
+        title: 'Project Alpha',
+        participant_ids: ['peer-a', 'peer-b'],
+        status: 'accepted',
+        direction: 'inbound',
+        created_at: '2026-04-01T10:00:00Z',
+        updated_at: '2026-04-01T10:02:00Z',
+      },
+      conversation: {
+        id: 'group-project-alpha',
+        title: 'Project Alpha',
+        kind: 'group',
+        updated_at: '2026-04-01T10:02:00Z',
+        participant_ids: ['peer-a', 'peer-b'],
+        last_message: {
+          id: 'group-msg-2',
+          conversation_id: 'group-project-alpha',
+          role: 'peer',
+          sender_name: 'Peer A',
+          content: 'History line 2',
+          status: 'sent',
+          created_at: '2026-04-01T10:01:00Z',
+          updated_at: '2026-04-01T10:01:00Z',
+        },
+      },
+      messages: [
+        {
+          id: 'group-msg-1',
+          conversation_id: 'group-project-alpha',
+          role: 'peer',
+          sender_name: 'Peer A',
+          content: 'History line 1',
+          status: 'sent',
+          metadata: {},
+          created_at: '2026-04-01T10:00:30Z',
+          updated_at: '2026-04-01T10:00:30Z',
+        },
+        {
+          id: 'group-msg-2',
+          conversation_id: 'group-project-alpha',
+          role: 'peer',
+          sender_name: 'Peer A',
+          content: 'History line 2',
+          status: 'sent',
+          metadata: {},
+          created_at: '2026-04-01T10:01:00Z',
+          updated_at: '2026-04-01T10:01:00Z',
+        },
+      ],
+      latest_conversation_event_id: 42,
+    })
+
+    window.ParaMindHarness.emitGlobalEvent({
+      type: 'group.invited',
+      payload: {
+        invitation: {
+          id: 'invite-1',
+          conversation_id: 'group-project-alpha',
+          inviter_id: 'peer-a',
+          target_peer_id: 'peer-a',
+          title: 'Project Alpha',
+          participant_ids: ['peer-a', 'peer-b'],
+          status: 'pending',
+          direction: 'inbound',
+          created_at: '2026-04-01T10:00:00Z',
+          updated_at: '2026-04-01T10:00:00Z',
+        },
+      },
+    })
+  })
+
+  await page.locator('#conversationList [data-conversation-id="invite:invite-1"]').click()
+  await expect(page.locator('#roomTitle')).toContainText('群邀请')
+
+  await page.getByRole('button', { name: '接受' }).click()
+
+  await expect(page.locator('#roomTitle')).toHaveText('Project Alpha')
+  await expect(page.locator('#roomMeta')).toContainText('group · 2 participants')
+  await expect(page.locator('#messageList')).toContainText('History line 1')
+  await expect(page.locator('#messageList')).toContainText('History line 2')
+  await expect(page.locator('#conversationList')).not.toContainText('群邀请 · Project Alpha')
+})
+
+test('existing group members can invite a new peer from the active group shell', async ({ page }) => {
+  await page.goto(`${baseUrl}/dev_harness.html?fixture=bootstrap_two_peers`)
+
+  await page.evaluate(() => {
+    window.ParaMindHarness.emitGlobalEvent({
+      type: 'peer.joined',
+      payload: {
+        peer: {
+          id: 'peer-c',
+          display_name: 'Peer C',
+          status: 'online',
+          backend_port: 5003,
+        },
+      },
+    })
+    window.ParaMindHarness.emitGlobalEvent({
+      type: 'conversation.created',
+      payload: {
+        conversation: {
+          id: 'group-project-alpha',
+          title: 'Project Alpha',
+          kind: 'group',
+          updated_at: '2026-04-01T10:00:00Z',
+          participant_ids: ['peer-a', 'peer-b'],
+          last_message: null,
+        },
+      },
+    })
+  })
+
+  await page.locator('#conversationList [data-conversation-id="group-project-alpha"]').click()
+  await expect(page.locator('#roomTitle')).toHaveText('Project Alpha')
+  await expect(page.getByRole('button', { name: '邀请成员' })).toBeVisible()
+
+  await page.getByRole('button', { name: '邀请成员' }).click()
+  await expect(page.locator('#groupComposerModal')).toBeVisible()
+  await expect(page.getByLabel('Peer C')).toBeVisible()
+  await expect(page.getByLabel('Peer A')).toHaveCount(0)
+  await expect(page.getByLabel('Peer B')).toHaveCount(0)
+})
+
+test('leaving a non-general group removes it locally and returns to the fallback conversation', async ({ page }) => {
+  await page.goto(`${baseUrl}/dev_harness.html?fixture=bootstrap_two_peers`)
+
+  await page.evaluate(() => {
+    window.ParaMindHarness.emitGlobalEvent({
+      type: 'conversation.created',
+      payload: {
+        conversation: {
+          id: 'group-project-alpha',
+          title: 'Project Alpha',
+          kind: 'group',
+          updated_at: '2026-04-01T10:00:00Z',
+          participant_ids: ['peer-a', 'peer-b'],
+          last_message: null,
+        },
+      },
+    })
+  })
+
+  await page.locator('#conversationList [data-conversation-id="group-project-alpha"]').click()
+  await expect(page.locator('#roomTitle')).toHaveText('Project Alpha')
+
+  await page.getByRole('button', { name: '退出群聊' }).click()
+
+  await expect(page.locator('#roomTitle')).toHaveText('General')
+  await expect(page.locator('#conversationList')).not.toContainText('Project Alpha')
 })

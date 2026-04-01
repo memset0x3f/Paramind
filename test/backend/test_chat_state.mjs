@@ -444,6 +444,110 @@ test('resolves post request navigation without leaving stale request selected', 
   )
 })
 
+test('flags shell refreshes for active lifecycle and conversation updates', () => {
+  assert.equal(
+    chatState.shouldRefreshActiveShellForEvent(
+      {
+        type: 'conversation.updated',
+        payload: {
+          conversation: {
+            id: 'general',
+            title: 'General',
+            kind: 'group',
+            participant_ids: ['peer-a', 'peer-b', 'peer-c'],
+          },
+        },
+      },
+      'general',
+      {
+        id: 'general',
+        title: 'General',
+        kind: 'group',
+        participant_ids: ['peer-a', 'peer-b'],
+      },
+    ),
+    true,
+  )
+
+  assert.equal(
+    chatState.shouldRefreshActiveShellForEvent(
+      {
+        type: 'conversation.updated',
+        payload: {
+          conversation: {
+            id: 'general',
+            title: 'General',
+            kind: 'group',
+            participant_ids: ['peer-a', 'peer-b'],
+            last_message: { id: 'm2', content: 'new preview' },
+          },
+        },
+      },
+      'general',
+      {
+        id: 'general',
+        title: 'General',
+        kind: 'group',
+        participant_ids: ['peer-a', 'peer-b'],
+      },
+    ),
+    false,
+  )
+
+  assert.equal(
+    chatState.shouldRefreshActiveShellForEvent(
+      {
+        type: 'dm.accepted',
+        payload: {
+          request_id: 'req-1',
+          conversation: { id: 'dm:peer-a-peer-b' },
+        },
+      },
+      'request:req-1',
+    ),
+    true,
+  )
+
+  assert.equal(
+    chatState.shouldRefreshActiveShellForEvent(
+      {
+        type: 'group.rejected',
+        payload: {
+          invitation_id: 'invite-1',
+        },
+      },
+      'invite:invite-1',
+    ),
+    true,
+  )
+
+  assert.equal(
+    chatState.shouldRefreshActiveShellForEvent(
+      {
+        type: 'conversation.updated',
+        payload: { conversation: { id: 'general' } },
+      },
+      'dm:peer-a-peer-b',
+      {
+        id: 'dm:peer-a-peer-b',
+        title: 'Peer B',
+        kind: 'dm',
+        participant_ids: ['peer-a', 'peer-b'],
+      },
+    ),
+    false,
+  )
+})
+
+test('excludes assistant from displayed participant counts', () => {
+  assert.equal(
+    chatState.getConversationParticipantCount({
+      participant_ids: ['peer-a', 'peer-b', 'assistant'],
+    }),
+    2,
+  )
+})
+
 
 test('normalizes bootstrap payloads into stable sidebar cards', () => {
   const bootstrap = chatState.normalizeBootstrapPayload({
@@ -531,6 +635,24 @@ test('applies global lifecycle events without requiring electron runtime state',
   assert.equal(next.dmRequests.length, 0)
   assert.equal(next.relationshipsByPeerId.get('peer-b').status, 'active_dm')
   assert.equal(next.conversations[0].id, 'dm:peer-a-peer-b')
+})
+
+test('normalizes backend relationship payloads that use the relationship field', () => {
+  const bootstrap = chatState.normalizeBootstrapPayload({
+    relationships: [
+      {
+        peer_id: 'peer-b',
+        relationship: 'active_dm',
+        conversation_id: 'dm:peer-a-peer-b',
+        request_id: null,
+      },
+    ],
+  })
+
+  const relationship = bootstrap.relationshipsByPeerId.get('peer-b')
+  assert.equal(relationship.status, 'active_dm')
+  assert.equal(relationship.relationship, 'active_dm')
+  assert.equal(relationship.conversation_id, 'dm:peer-a-peer-b')
 })
 
 test('conversation event helpers only update the targeted draft message', () => {

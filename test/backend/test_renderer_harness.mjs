@@ -70,3 +70,13 @@ test('ai token events update only the targeted draft message', () => {
   assert.equal(messages.find((item) => item.id === firstDraft.id).content, '')
   assert.equal(messages.find((item) => item.id === secondDraft.id).content, 'Hello')
 })
+
+test('updating an ai draft persists the edited content in the harness controller', () => {
+  const controller = harness.createHarnessController({ chatState, fixtures })
+  fixtures.applyHarnessFixture(controller, 'ai_streaming_draft')
+
+  controller.updateAssistantDraft('draft-1', 'Edited draft')
+
+  const draft = controller.getMessages('general').find((item) => item.id === 'draft-1')
+  assert.equal(draft?.content, 'Edited draft')
+})

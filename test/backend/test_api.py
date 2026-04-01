@@ -564,15 +564,300 @@ def test_group_invitation_accept_flow_creates_group_for_accepting_peer_only(tmp_
     bootstrap_a = client_a.get("/api/bootstrap").json()
 
     group_id = payload["conversation"]["id"]
-    assert any(item["id"] == group_id for item in bootstrap_a["conversations"])
-    assert any(item["id"] == group_id for item in bootstrap_b["conversations"])
+    group_a = next((item for item in bootstrap_a["conversations"] if item["id"] == group_id), None)
+    group_b = next((item for item in bootstrap_b["conversations"] if item["id"] == group_id), None)
+    assert group_a is not None
+    assert group_b is not None
     assert all(item["id"] != group_id for item in bootstrap_c["conversations"])
+    assert sorted(group_a["participant_ids"]) == ["peer-a", "peer-b"]
+    assert sorted(group_b["participant_ids"]) == ["peer-a", "peer-b"]
 
     global_events = client_a.get("/api/events/stream", params={"after": 0, "limit": 256})
     assert global_events.status_code == 200
     event_names = [event_type for event_type, _ in _event_types(global_events.text)]
     assert "group.accepted" in event_names
     assert "group.rejected" in event_names
+
+
+def test_accepting_group_invitation_returns_full_group_history(tmp_path):
+    coordinator_state = CoordinatorState()
+    shared_transport = _CoordinatorStateTransport(coordinator_state)
+    client_a = _make_client(
+        tmp_path,
+        "peer-a",
+        "Peer A",
+        5101,
+        settings_overrides={"p2p_transport": shared_transport},
+    )
+    client_b = _make_client(
+        tmp_path,
+        "peer-b",
+        "Peer B",
+        5102,
+        settings_overrides={"p2p_transport": shared_transport},
+    )
+
+    created = client_a.post(
+        "/api/group/invitations",
+        json={"title": "Project Alpha", "target_peer_ids": ["peer-b"]},
+    )
+    assert created.status_code == 201
+    group_id = created.json()["conversation"]["id"]
+
+    first = client_a.post(
+        f"/api/conversations/{group_id}/messages",
+        json={"role": "user", "content": "message before join 1"},
+    )
+    second = client_a.post(
+        f"/api/conversations/{group_id}/messages",
+        json={"role": "user", "content": "message before join 2"},
+    )
+    assert first.status_code == 201
+    assert second.status_code == 201
+
+    invites_b = client_b.get("/api/group/invitations").json()
+    accepted = client_b.post(f"/api/group/invitations/{invites_b[0]['id']}/accept")
+    assert accepted.status_code == 200
+    payload = accepted.json()
+
+    assert payload["conversation"]["id"] == group_id
+    assert [item["content"] for item in payload["messages"]] == [
+        "message before join 1",
+        "message before join 2",
+        "Peer B joined the group",
+    ]
+    assert payload["messages"][-1]["role"] == "system"
+    assert payload["latest_conversation_event_id"] > 0
+
+    history_b = client_b.get(f"/api/conversations/{group_id}/messages")
+    assert history_b.status_code == 200
+    assert [item["content"] for item in history_b.json()] == [
+        "message before join 1",
+        "message before join 2",
+        "Peer B joined the group",
+    ]
+
+
+def test_group_invitation_events_are_visible_only_to_inviter_and_target_and_reject_keeps_group_hidden(tmp_path):
+    coordinator_state = CoordinatorState()
+    shared_transport = _CoordinatorStateTransport(coordinator_state)
+    client_a = _make_client(
+        tmp_path,
+        "peer-a",
+        "Peer A",
+        5101,
+        settings_overrides={"p2p_transport": shared_transport},
+    )
+    client_b = _make_client(
+        tmp_path,
+        "peer-b",
+        "Peer B",
+        5102,
+        settings_overrides={"p2p_transport": shared_transport},
+    )
+    client_c = _make_client(
+        tmp_path,
+        "peer-c",
+        "Peer C",
+        5103,
+        settings_overrides={"p2p_transport": shared_transport},
+    )
+
+    created = client_a.post(
+        "/api/group/invitations",
+        json={"title": "Project Alpha", "target_peer_ids": ["peer-b"]},
+    )
+    assert created.status_code == 201
+    group_id = created.json()["conversation"]["id"]
+
+    invite_b = client_b.get("/api/group/invitations").json()[0]
+    accepted_b = client_b.post(f"/api/group/invitations/{invite_b['id']}/accept")
+    assert accepted_b.status_code == 200
+
+    cursor_a = client_a.get("/api/bootstrap").json()["latest_global_event_id"]
+    cursor_b = client_b.get("/api/bootstrap").json()["latest_global_event_id"]
+    cursor_c = client_c.get("/api/bootstrap").json()["latest_global_event_id"]
+
+    invited = client_a.post(
+        "/api/group/invitations",
+        json={"conversation_id": group_id, "target_peer_ids": ["peer-c"]},
+    )
+    assert invited.status_code == 201
+    invitation_id = invited.json()["invitations"][0]["id"]
+
+    invites_a = client_a.get("/api/group/invitations").json()
+    invites_b = client_b.get("/api/group/invitations").json()
+    invites_c = client_c.get("/api/group/invitations").json()
+
+    assert [item["id"] for item in invites_a] == [invitation_id]
+    assert invites_b == []
+    assert [item["id"] for item in invites_c] == [invitation_id]
+
+    events_a = _event_types(client_a.get("/api/events/stream", params={"after": cursor_a, "limit": 128}).text)
+    events_b = _event_types(client_b.get("/api/events/stream", params={"after": cursor_b, "limit": 128}).text)
+    events_c = _event_types(client_c.get("/api/events/stream", params={"after": cursor_c, "limit": 128}).text)
+
+    assert "group.invited" in [event_type for event_type, _ in events_a]
+    assert "group.invited" not in [event_type for event_type, _ in events_b]
+    assert "group.invited" in [event_type for event_type, _ in events_c]
+
+    rejected = client_c.post(f"/api/group/invitations/{invitation_id}/reject")
+    assert rejected.status_code == 200
+
+    bootstrap_c = client_c.get("/api/bootstrap").json()
+    assert bootstrap_c["group_invitations"] == []
+    assert all(item["id"] != group_id for item in bootstrap_c["conversations"])
+
+
+def test_existing_group_member_can_invite_new_peer_and_all_members_see_updated_participants(tmp_path):
+    coordinator_state = CoordinatorState()
+    shared_transport = _CoordinatorStateTransport(coordinator_state)
+    client_a = _make_client(
+        tmp_path,
+        "peer-a",
+        "Peer A",
+        5101,
+        settings_overrides={"p2p_transport": shared_transport},
+    )
+    client_b = _make_client(
+        tmp_path,
+        "peer-b",
+        "Peer B",
+        5102,
+        settings_overrides={"p2p_transport": shared_transport},
+    )
+    client_c = _make_client(
+        tmp_path,
+        "peer-c",
+        "Peer C",
+        5103,
+        settings_overrides={"p2p_transport": shared_transport},
+    )
+
+    created = client_a.post(
+        "/api/group/invitations",
+        json={"title": "Project Alpha", "target_peer_ids": ["peer-b"]},
+    )
+    assert created.status_code == 201
+    group_id = created.json()["conversation"]["id"]
+
+    invite_b = client_b.get("/api/group/invitations").json()[0]
+    accepted_b = client_b.post(f"/api/group/invitations/{invite_b['id']}/accept")
+    assert accepted_b.status_code == 200
+
+    created_by_b = client_b.post(
+        "/api/group/invitations",
+        json={"conversation_id": group_id, "target_peer_ids": ["peer-c"]},
+    )
+    assert created_by_b.status_code == 201
+
+    invite_c = client_c.get("/api/group/invitations").json()[0]
+    accepted_c = client_c.post(f"/api/group/invitations/{invite_c['id']}/accept")
+    assert accepted_c.status_code == 200
+
+    bootstrap_a = client_a.get("/api/bootstrap").json()
+    bootstrap_b = client_b.get("/api/bootstrap").json()
+    bootstrap_c = client_c.get("/api/bootstrap").json()
+
+    group_a = next(item for item in bootstrap_a["conversations"] if item["id"] == group_id)
+    group_b = next(item for item in bootstrap_b["conversations"] if item["id"] == group_id)
+    group_c = next(item for item in bootstrap_c["conversations"] if item["id"] == group_id)
+
+    assert sorted(group_a["participant_ids"]) == ["peer-a", "peer-b", "peer-c"]
+    assert sorted(group_b["participant_ids"]) == ["peer-a", "peer-b", "peer-c"]
+    assert sorted(group_c["participant_ids"]) == ["peer-a", "peer-b", "peer-c"]
+
+
+def test_leaving_group_updates_remaining_members_and_removes_group_for_leaver(tmp_path):
+    coordinator_state = CoordinatorState()
+    shared_transport = _CoordinatorStateTransport(coordinator_state)
+    client_a = _make_client(
+        tmp_path,
+        "peer-a",
+        "Peer A",
+        5101,
+        settings_overrides={"p2p_transport": shared_transport},
+    )
+    client_b = _make_client(
+        tmp_path,
+        "peer-b",
+        "Peer B",
+        5102,
+        settings_overrides={"p2p_transport": shared_transport},
+    )
+    client_c = _make_client(
+        tmp_path,
+        "peer-c",
+        "Peer C",
+        5103,
+        settings_overrides={"p2p_transport": shared_transport},
+    )
+
+    created = client_a.post(
+        "/api/group/invitations",
+        json={"title": "Project Alpha", "target_peer_ids": ["peer-b", "peer-c"]},
+    )
+    assert created.status_code == 201
+    group_id = created.json()["conversation"]["id"]
+
+    invite_b = client_b.get("/api/group/invitations").json()[0]
+    invite_c = client_c.get("/api/group/invitations").json()[0]
+    assert client_b.post(f"/api/group/invitations/{invite_b['id']}/accept").status_code == 200
+    assert client_c.post(f"/api/group/invitations/{invite_c['id']}/accept").status_code == 200
+
+    left = client_b.post(f"/api/conversations/{group_id}/close")
+    assert left.status_code == 200
+
+    bootstrap_a = client_a.get("/api/bootstrap").json()
+    bootstrap_b = client_b.get("/api/bootstrap").json()
+    bootstrap_c = client_c.get("/api/bootstrap").json()
+
+    group_a = next(item for item in bootstrap_a["conversations"] if item["id"] == group_id)
+    group_c = next(item for item in bootstrap_c["conversations"] if item["id"] == group_id)
+    assert sorted(group_a["participant_ids"]) == ["peer-a", "peer-c"]
+    assert sorted(group_c["participant_ids"]) == ["peer-a", "peer-c"]
+    assert all(item["id"] != group_id for item in bootstrap_b["conversations"])
+
+
+def test_ai_messages_do_not_add_virtual_participants_to_group_summary(tmp_path):
+    client = _make_client(tmp_path, "peer-a", "Peer A", 5101)
+
+    bootstrap = client.get("/api/bootstrap").json()
+    conversation_id = bootstrap["conversations"][0]["id"]
+    before = next(item for item in bootstrap["conversations"] if item["id"] == conversation_id)
+    assert "assistant" not in before["participant_ids"]
+
+    requested = client.post(
+        f"/api/conversations/{conversation_id}/messages",
+        json={"role": "user", "content": "@AI 介绍一下你自己"},
+    )
+    assert requested.status_code == 201
+
+    draft = client.post(
+        "/api/ai/drafts",
+        json={
+            "conversation_id": conversation_id,
+            "source_message_id": requested.json()["id"],
+        },
+    )
+    assert draft.status_code == 201
+
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        history = client.get(f"/api/conversations/{conversation_id}/messages").json()
+        local_draft = next((item for item in history if item["id"] == draft.json()["draft"]["id"]), None)
+        if local_draft and local_draft["status"] == "completed":
+            break
+        time.sleep(0.05)
+
+    published = client.post(f"/api/ai/drafts/{draft.json()['draft']['id']}/send")
+    assert published.status_code == 201
+
+    refreshed = client.get("/api/bootstrap").json()
+    after = next(item for item in refreshed["conversations"] if item["id"] == conversation_id)
+    assert "assistant" not in after["participant_ids"]
+    assert "ai" not in [item.lower() for item in after["participant_ids"]]
+    assert sorted(after["participant_ids"]) == sorted(before["participant_ids"])
 
 
 def test_ai_draft_lifecycle_uses_explicit_user_ai_request_and_publish_turns_into_ai_message(tmp_path):

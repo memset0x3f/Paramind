@@ -51,12 +51,12 @@ class InferenceRunner:
                 self.settings.test_mode or os.environ.get("PARAMIND_FORCE_MOCK_AI", "0") == "1"
             ):
                 raise self._engine_error
-            async for token in self._mock_stream(prompt):
-                yield token
+            async for cumulative_text in self._mock_stream(prompt):
+                yield cumulative_text
             return
 
-        async for token in self._threaded_generate(engine, prompt):
-            yield token
+        async for cumulative_text in self._threaded_generate(engine, prompt):
+            yield cumulative_text
 
     async def _threaded_generate(self, engine, prompt: str):
         loop = asyncio.get_running_loop()
@@ -64,8 +64,8 @@ class InferenceRunner:
 
         def worker():
             try:
-                for token in engine.generate_stream(prompt, max_tokens=1024):
-                    loop.call_soon_threadsafe(queue.put_nowait, token)
+                for cumulative_text in engine.generate_stream(prompt, max_tokens=1024):
+                    loop.call_soon_threadsafe(queue.put_nowait, cumulative_text)
             except Exception as exc:  # pragma: no cover - environment dependent
                 loop.call_soon_threadsafe(queue.put_nowait, exc)
             finally:
@@ -84,13 +84,15 @@ class InferenceRunner:
 
     async def _mock_stream(self, prompt: str):
         if "hello" in prompt.lower():
-            tokens = ["Hello", " ", "back"]
+            pieces = ["Hello", " ", "back"]
         elif "介绍" in prompt or "你自己" in prompt:
-            tokens = ["我是", " ", "ParaMind"]
+            pieces = ["我是", " ", "ParaMind"]
         else:
-            tokens = ["已收到", "：", prompt[:18] or "消息"]
+            pieces = ["已收到", "：", prompt[:18] or "消息"]
 
-        for token in tokens:
+        acc = ""
+        for piece in pieces:
             if self.settings.mock_inference_delay:
                 await asyncio.sleep(self.settings.mock_inference_delay)
-            yield token
+            acc += piece
+            yield acc

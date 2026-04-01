@@ -195,10 +195,10 @@ function updateScrollIndicator() {
   if (scrolledUp) {
     if (unread > 0) {
       countEl.textContent = `${unread} 条新消息`
-      countEl.hidden = false
     } else {
-      countEl.hidden = true
+      countEl.textContent = '回到底部'
     }
+    countEl.hidden = false
     indicator.hidden = false
   } else {
     indicator.hidden = true
@@ -369,10 +369,15 @@ function getPendingRequestTitle(request) {
 }
 
 function getPendingRequestPreview(request) {
+  const counterpartId =
+    request.requester_id === state.self?.id ? request.target_peer_id : request.requester_id
+  const counterpartName = getPeerDisplayName(counterpartId)
   if (request.status !== 'pending') {
     return request.status === 'accepted' ? '请求已接受' : '请求已拒绝'
   }
-  return request.direction === 'outbound' ? '等待对方同意' : '等待你处理'
+  return request.direction === 'outbound'
+    ? `等待 ${counterpartName} 回应`
+    : `${counterpartName} 请求与你私聊`
 }
 
 function getPendingGroupInvitationTitle(invitation) {
@@ -380,10 +385,14 @@ function getPendingGroupInvitationTitle(invitation) {
 }
 
 function getPendingGroupInvitationPreview(invitation) {
+  const inviterName = getPeerDisplayName(invitation.inviter_id)
+  const targetName = getPeerDisplayName(invitation.target_peer_id)
   if (invitation.status !== 'pending') {
     return invitation.status === 'accepted' ? '邀请已接受' : '邀请已拒绝'
   }
-  return invitation.direction === 'outbound' ? '等待成员回应' : '等待你处理'
+  return invitation.direction === 'outbound'
+    ? `已邀请 ${targetName}，等待回应`
+    : `${inviterName} 邀请你加入 ${invitation.title}`
 }
 
 function getDmConversationForPeer(peerId) {
@@ -819,7 +828,7 @@ function renderRequestConversation(request) {
   const counterpartName = getPeerDisplayName(counterpartId)
   const statusTone = request.status === 'accepted' ? 'completed' : request.status === 'rejected' ? 'failed' : 'pending'
   const statusText = request.status === 'pending'
-    ? (isInbound ? '等待你决定是否接受私聊。' : '等待对方同意你的私聊请求。')
+    ? (isInbound ? `${counterpartName} 请求与你私聊。` : `已向 ${counterpartName} 发起私聊，等待回应。`)
     : (request.status === 'accepted' ? '该请求已被接受。' : '该请求已被拒绝。')
 
   const actions = request.status === 'pending'
@@ -852,9 +861,11 @@ function renderRequestConversation(request) {
 
 function renderGroupInvitation(invitation) {
   const isInbound = invitation.direction === 'inbound'
+  const inviterName = getPeerDisplayName(invitation.inviter_id)
+  const targetName = getPeerDisplayName(invitation.target_peer_id)
   const statusTone = invitation.status === 'accepted' ? 'completed' : invitation.status === 'rejected' ? 'failed' : 'pending'
   const statusText = invitation.status === 'pending'
-    ? (isInbound ? '等待你决定是否加入群聊。' : '等待成员回应群邀请。')
+    ? (isInbound ? `${inviterName} 邀请你加入 ${invitation.title}。` : `已邀请 ${targetName} 加入 ${invitation.title}，等待回应。`)
     : (invitation.status === 'accepted' ? '该邀请已被接受。' : '该邀请已被拒绝。')
   const actions = invitation.status === 'pending'
     ? (
@@ -999,11 +1010,13 @@ function renderRoomActions() {
   $('leaveGroupBtn').hidden = !isInvitableGroup
 }
 
-function renderBaseMessageCard(message, cssRole, content, actions = '') {
+function renderBaseMessageCard(message, cssRole, content, actions = '', useMarkdown = false) {
   const role = message.role || 'system'
   const senderInitial = (message.sender_name || role || '?').slice(0, 1).toUpperCase()
   const time = CHAT_STATE.formatClockTime(message.created_at)
   const statusTone = CHAT_STATE.getStatusTone(message)
+  const cardClass = useMarkdown ? 'message-card prose' : 'message-card'
+  const cardContent = useMarkdown ? renderMarkdown(content) : escapeHtml(content)
   return `
     <div class="message ${cssRole} ${message.status === 'failed' ? 'failed' : ''}" data-message-id="${escapeHtml(message.id)}" data-card-kind="${escapeHtml(CHAT_STATE.getCardKind(message))}">
       <div class="avatar">${escapeHtml(senderInitial)}</div>
@@ -1013,7 +1026,7 @@ function renderBaseMessageCard(message, cssRole, content, actions = '') {
           <span class="status-pill status-${escapeHtml(statusTone)}" data-message-status="${escapeHtml(message.id)}">${escapeHtml(CHAT_STATE.getDisplayStatus(message))}</span>
           <span data-message-time="${escapeHtml(message.id)}">${escapeHtml(time)}</span>
         </div>
-        <div class="message-card prose" data-message-content="${escapeHtml(message.id)}">${renderMarkdown(content)}</div>
+        <div class="${cardClass}" data-message-content="${escapeHtml(message.id)}">${cardContent}</div>
         <div data-message-actions="${escapeHtml(message.id)}">${actions}</div>
       </div>
     </div>
@@ -1021,11 +1034,11 @@ function renderBaseMessageCard(message, cssRole, content, actions = '') {
 }
 
 function renderUserMessageCard(message) {
-  return renderBaseMessageCard(message, 'user', message.content || '')
+  return renderBaseMessageCard(message, 'user', message.content || '', '', false)
 }
 
 function renderPeerMessageCard(message) {
-  return renderBaseMessageCard(message, 'peer', message.content || '')
+  return renderBaseMessageCard(message, 'peer', message.content || '', '', false)
 }
 
 function renderPublishedAIMessageCard(message, conversationId) {
@@ -1035,15 +1048,15 @@ function renderPublishedAIMessageCard(message, conversationId) {
   const retryActions = hasRetryableAssistantTurn(conversationId) && latestAssistant?.id === message.id
     ? `<div class="message-actions"><button type="button" class="primary retry-btn" data-conversation-id="${escapeHtml(conversationId)}"><svg class="ico ico-sm" style="display:inline;width:12px;height:12px"><use href="#ico-retry"/></svg> 重试此轮</button></div>`
     : ''
-  return renderBaseMessageCard(message, 'assistant', message.content || '...', retryActions)
+  return renderBaseMessageCard(message, 'assistant', message.content || '...', retryActions, true)
 }
 
 function renderSystemMessageCard(message) {
-  return renderBaseMessageCard(message, 'system', message.content || '')
+  return renderBaseMessageCard(message, 'system', message.content || '', '', false)
 }
 
 function renderRequestMessageCard(message) {
-  return renderBaseMessageCard(message, 'system', message.content || '')
+  return renderBaseMessageCard(message, 'system', message.content || '', '', false)
 }
 
 function renderTimelineCard(message, conversationId) {
@@ -1234,13 +1247,18 @@ function patchMessageNode(conversationId, message) {
     }
     indexMessageNode(registry, replacement)
     reorderTimelineNodes(conversationId)
-    // Show scroll indicator if user is scrolled up (exclude own messages)
+    // Auto-scroll or show scroll indicator for new messages
     if (conversationId === state.activeConversationId) {
       const scrolledUp = state.userScrolledUpByConversation.get(conversationId)
       const isSelf = message.sender_id && message.sender_id === state.self?.id
-      if (scrolledUp && !isSelf) {
-        const count = (state.unreadWhileScrolledUp.get(conversationId) || 0) + 1
-        state.unreadWhileScrolledUp.set(conversationId, count)
+      if (scrolledUp) {
+        if (!isSelf) {
+          const count = (state.unreadWhileScrolledUp.get(conversationId) || 0) + 1
+          state.unreadWhileScrolledUp.set(conversationId, count)
+        }
+      } else {
+        const list = $('messageList')
+        if (list) list.scrollTop = list.scrollHeight
       }
       updateScrollIndicator()
     }
@@ -1281,9 +1299,14 @@ function patchMessageNode(conversationId, message) {
         contentNode.textContent = message.content || ''
       }
     } else {
-      // Streaming complete or non-streaming update: render markdown
+      // Streaming complete or non-streaming update
       delete contentNode.dataset.streamingStarted
-      contentNode.innerHTML = renderMarkdown(message.content || '')
+      const isAiRole = message.role === 'assistant' || message.metadata?.local_draft
+      if (isAiRole) {
+        contentNode.innerHTML = renderMarkdown(message.content || '')
+      } else {
+        contentNode.textContent = message.content || ''
+      }
     }
   }
 
@@ -1335,8 +1358,8 @@ function patchMessageStatus(conversationId, messageId, message) {
   statusNode.className = `status-pill status-${tone}`
 }
 
-function appendTokenToDraft(conversationId, messageId, token) {
-  if (typeof token !== 'string' || !token) return
+function setDraftAssistantContent(conversationId, messageId, cumulativeText) {
+  if (typeof cumulativeText !== 'string' || !cumulativeText) return
 
   const registry = state.timelineRegistryByConversationId.get(conversationId)
   const pane = state.timelinePaneByConversationId.get(conversationId)
@@ -1388,7 +1411,7 @@ function appendTokenToDraft(conversationId, messageId, token) {
     contentNode.dataset.streamingStarted = '1'
     contentNode.textContent = ''
   }
-  contentNode.textContent = message.content || `${contentNode.textContent || ''}${token}`
+  contentNode.textContent = cumulativeText
   patchMessageStatus(conversationId, messageId, { ...message, status: 'streaming' })
 
   // Scroll guard: only auto-scroll if user is at bottom
@@ -2366,8 +2389,10 @@ function handleEvent(event) {
     case 'message.token': {
       const conversationId = event.conversation_id
       const messageId = event.payload?.message_id || event.entity_id
-      const token = String(event.payload?.token || '')
-      if (conversationId && messageId && token) appendTokenToDraft(conversationId, messageId, token)
+      const cumulativeText = String(event.payload?.token || '')
+      if (conversationId && messageId && cumulativeText) {
+        setDraftAssistantContent(conversationId, messageId, cumulativeText)
+      }
       renderScope = 'none'
       break
     }

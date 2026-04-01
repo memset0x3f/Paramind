@@ -64,7 +64,7 @@ test('ai token events update only the targeted draft message', () => {
 
   const firstDraft = controller.createAssistantDraft('general')
   const secondDraft = controller.createAssistantDraft('general')
-  controller.appendAssistantToken('general', secondDraft.id, 'Hello')
+  controller.setAssistantDraftContent('general', secondDraft.id, 'Hello')
 
   const messages = controller.getMessages('general')
   assert.equal(messages.find((item) => item.id === firstDraft.id).content, '')

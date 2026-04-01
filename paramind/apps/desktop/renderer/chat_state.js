@@ -31,7 +31,7 @@ function getCardKind(message) {
   const normalized = normalizeMessage(message)
   if (normalized.metadata?.local_draft) return 'message.ai-draft'
   if (normalized.kind === 'dm.request') return 'message.request'
-  if (normalized.role === 'assistant' && normalized.sender_name === 'AI') return 'message.ai'
+  if (normalized.role === 'assistant') return 'message.ai'
   if (normalized.role === 'peer') return 'message.peer'
   if (normalized.role === 'user') return 'message.user'
   return 'message.system-chat'
@@ -711,15 +711,15 @@ function reduceEvent(state, event) {
 
   if (event.type === 'message.token') {
     const conversationIdForToken = conversationId
-    const token = String(event.payload?.token || '')
+    const cumulativeText = String(event.payload?.token || '')
     const messageId = String(event.payload?.message_id || event.entity_id || '')
     const current = next.messagesByConversation.get(conversationIdForToken) || []
     const index = current.findIndex((item) => String(item.id) === messageId)
-    if (index >= 0 && token) {
+    if (index >= 0 && cumulativeText) {
       const existing = current[index]
       const updated = {
         ...existing,
-        content: `${existing.content || ''}${token}`,
+        content: cumulativeText,
         status: 'streaming',
       }
       const nextMessages = current.slice()

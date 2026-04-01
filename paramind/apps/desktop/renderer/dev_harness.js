@@ -312,12 +312,12 @@ function createHarnessController({
     return draft
   }
 
-  function appendAssistantToken(conversationId, messageId, token) {
+  function setAssistantDraftContent(conversationId, messageId, cumulativeText) {
     const currentMessage = getMessages(conversationId).find((item) => item.id === messageId)
     if (currentMessage) {
       const nextMessages = (conversationState.messagesByConversation.get(conversationId) || []).map((item) => (
         item.id === messageId
-          ? { ...item, content: `${item.content || ''}${token}`, status: 'streaming', updated_at: new Date().toISOString() }
+          ? { ...item, content: cumulativeText, status: 'streaming', updated_at: new Date().toISOString() }
           : item
       ))
       conversationState.messagesByConversation.set(conversationId, nextMessages)
@@ -328,7 +328,7 @@ function createHarnessController({
         payload: {
           message: {
             ...currentMessage,
-            content: `${currentMessage.content || ''}${token}`,
+            content: cumulativeText,
             status: 'streaming',
             updated_at: new Date().toISOString(),
           },
@@ -336,7 +336,12 @@ function createHarnessController({
       })
       return
     }
-    emitConversationEvent({ type: 'message.token', conversation_id: conversationId, entity_id: messageId, payload: { message_id: messageId, token } })
+    emitConversationEvent({
+      type: 'message.token',
+      conversation_id: conversationId,
+      entity_id: messageId,
+      payload: { message_id: messageId, token: cumulativeText },
+    })
   }
 
   function updateAssistantDraft(draftId, content) {
@@ -397,7 +402,7 @@ function createHarnessController({
     acceptGroupInvitation,
     rejectGroupInvitation,
     createAssistantDraft,
-    appendAssistantToken,
+    setAssistantDraftContent,
     updateAssistantDraft,
     publishAssistantMessage,
     getActiveConversationId: () => bootstrapModel.activeConversationId,
@@ -554,7 +559,7 @@ function installBrowserHarness() {
     acceptGroupInvitation: (invitationId) => controller.acceptGroupInvitation(invitationId),
     rejectGroupInvitation: (invitationId) => controller.rejectGroupInvitation(invitationId),
     createAssistantDraft: (conversationId) => controller.createAssistantDraft(conversationId),
-    appendAssistantToken: (conversationId, messageId, token) => controller.appendAssistantToken(conversationId, messageId, token),
+    setAssistantDraftContent: (conversationId, messageId, cumulativeText) => controller.setAssistantDraftContent(conversationId, messageId, cumulativeText),
     updateAssistantDraft: (draftId, content) => controller.updateAssistantDraft(draftId, content),
     publishAssistantMessage: (conversationId, message) => controller.publishAssistantMessage(conversationId, message),
   }
@@ -572,7 +577,7 @@ function installBrowserHarness() {
       '<button id="harnessSeedBtn" type="button">Seed bootstrap</button>',
       '<button id="harnessRequestBtn" type="button">Request DM</button>',
       '<button id="harnessAcceptBtn" type="button">Accept DM</button>',
-      '<button id="harnessAiBtn" type="button">Append AI token</button>',
+      '<button id="harnessAiBtn" type="button">Simulate AI stream</button>',
     ].join('')
     document.body.appendChild(panel)
 
@@ -584,7 +589,7 @@ function installBrowserHarness() {
     })
     document.getElementById('harnessAiBtn')?.addEventListener('click', () => {
       const draft = window.ParaMindHarness.createAssistantDraft('general')
-      window.ParaMindHarness.appendAssistantToken('general', draft.id, 'token')
+      window.ParaMindHarness.setAssistantDraftContent('general', draft.id, 'token')
     })
   })
 

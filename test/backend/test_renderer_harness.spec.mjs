@@ -395,7 +395,7 @@ test('local ai drafts do not change the left preview until publish', async ({ pa
   await expect(page.locator('#conversationList .conversation .subtitle').first()).toHaveText('Welcome to ParaMind')
 
   const draftId = await page.evaluate(() => window.ParaMindHarness.createAssistantDraft('general').id)
-  await page.evaluate((id) => window.ParaMindHarness.appendAssistantToken('general', id, 'Draft only'), draftId)
+  await page.evaluate((id) => window.ParaMindHarness.setAssistantDraftContent('general', id, 'Draft only'), draftId)
 
   await expect.poll(async () => page.evaluate(() => window.ParaMindHarness.getSidebarCards()[0].preview)).toBe('Welcome to ParaMind')
 
@@ -744,6 +744,30 @@ test('marked.js and DOMPurify are loaded and render markdown bold and inline cod
 test('scroll indicator appears when user is scrolled up and a new message arrives', async ({ page }) => {
   await page.goto(`${baseUrl}/dev_harness.html?fixture=bootstrap_two_peers`)
   await expect(page.locator('#messageList')).toContainText('Welcome to ParaMind')
+
+  await page.evaluate(() => {
+    for (let index = 0; index < 24; index += 1) {
+      const minute = String(index).padStart(2, '0')
+      window.ParaMindHarness.emitConversationEvent({
+        type: 'message.created',
+        conversation_id: 'general',
+        entity_id: `msg-overflow-${index}`,
+        payload: {
+          message: {
+            id: `msg-overflow-${index}`,
+            conversation_id: 'general',
+            role: 'peer',
+            sender_name: index % 2 === 0 ? 'Peer A' : 'Peer B',
+            content: `Overflow message ${index}`,
+            status: 'sent',
+            metadata: {},
+            created_at: `2026-04-01T09:${minute}:00Z`,
+            updated_at: `2026-04-01T09:${minute}:00Z`,
+          },
+        },
+      })
+    }
+  })
 
   // Simulate user scrolled up by setting scrollTop to 0 and dispatching scroll event
   await page.locator('#messageList').evaluate((el) => { el.scrollTop = 0 })

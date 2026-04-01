@@ -37,8 +37,8 @@ def test_inference_runner_uses_real_engine_when_available(monkeypatch):
 
         def generate_stream(self, prompt, max_tokens=80):
             yield "real"
-            yield ":"
-            yield prompt
+            yield "real:"
+            yield f"real:{prompt}"
 
     fake_inference = types.ModuleType("inference")
     fake_inference.LocalInferenceEngine = FakeEngine
@@ -53,7 +53,7 @@ def test_inference_runner_uses_real_engine_when_available(monkeypatch):
 
     tokens = asyncio.run(collect())
 
-    assert tokens == ["real", ":", "hello"]
+    assert tokens == ["real", "real:", "real:hello"]
     assert calls == {
         "model_id": "Qwen/Qwen2.5-0.5B-Instruct",
         "family": "resolved:qwen",
@@ -92,9 +92,9 @@ def test_inference_runner_keeps_event_loop_responsive_during_sync_generation(mon
             time.sleep(0.2)
             yield "slow"
             time.sleep(0.2)
-            yield "-"
+            yield "slow-"
             time.sleep(0.2)
-            yield prompt
+            yield f"slow-{prompt}"
 
     fake_inference = types.ModuleType("inference")
     fake_inference.LocalInferenceEngine = SlowEngine
@@ -119,5 +119,5 @@ def test_inference_runner_keeps_event_loop_responsive_during_sync_generation(mon
 
     tokens, _ = asyncio.run(main())
 
-    assert tokens == ["slow", "-", "hello"]
+    assert tokens == ["slow", "slow-", "slow-hello"]
     assert ticks == 5

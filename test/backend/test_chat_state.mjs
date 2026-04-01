@@ -268,7 +268,7 @@ test('applies message.token events incrementally to streaming messages', () => {
     type: 'message.token',
     conversation_id: 'conv-a',
     entity_id: 'draft-1',
-    payload: { message_id: 'draft-1', token: '，世界' },
+    payload: { message_id: 'draft-1', token: '你好，世界' },
   })
 
   const draft = state.messagesByConversation.get('conv-a').find((item) => item.id === 'draft-1')

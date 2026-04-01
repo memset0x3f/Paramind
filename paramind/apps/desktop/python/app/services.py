@@ -372,6 +372,54 @@ class DesktopAppService:
         ).all()
         return [self._serialize_message(item) for item in rows]
 
+    def _create_system_message(
+        self,
+        session: Session,
+        conversation: Conversation,
+        content: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+        broadcast: bool = True,
+    ):
+        metadata_dict = {
+            "conversation_title": conversation.title,
+            "conversation_kind": conversation.kind,
+            "participant_ids": self._conversation_summary_participant_ids(session, conversation),
+            "local_draft": False,
+        }
+        if metadata:
+            metadata_dict.update(metadata)
+        message = Message(
+            conversation_id=conversation.id,
+            sender_id="system",
+            sender_name="System",
+            role="system",
+            content=content,
+            status="sent",
+            metadata_json=json.dumps(metadata_dict, ensure_ascii=False),
+        )
+        session.add(message)
+        session.flush()
+        conversation.updated_at = message.updated_at
+        self._record_event(
+            session,
+            "message.created",
+            conversation.id,
+            message.id,
+            {"message": self._serialize_message(message)},
+            broadcast=broadcast,
+        )
+        self._record_event(
+            session,
+            "conversation.updated",
+            conversation.id,
+            conversation.id,
+            {"conversation": self._serialize_conversation(session, conversation)},
+            broadcast=broadcast,
+            scope="global",
+        )
+        return message
+
     def _latest_conversation_event_id(self, session: Session, conversation_id: str):
         return session.exec(
             select(EventLog.id)
@@ -784,6 +832,13 @@ class DesktopAppService:
                     self._ensure_participant(session, conversation.id, peer_id)
                 conversation.updated_at = utcnow()
                 self._backfill_conversation_history_from_transport(session, conversation.id)
+                self._create_system_message(
+                    session,
+                    conversation,
+                    f"{self.settings.instance_name} joined the group",
+                    metadata={"kind": "group.member_joined", "peer_id": self.settings.instance_id},
+                    broadcast=True,
+                )
                 conversation_payload = self._serialize_conversation(session, conversation)
                 messages_payload = self._serialize_conversation_messages(session, conversation.id)
                 latest_conversation_event_id = int(self._latest_conversation_event_id(session, conversation.id))
@@ -1094,9 +1149,15 @@ class DesktopAppService:
         if not payload:
             return
         invitation_id = str(payload["id"])
+        direct_party = self.settings.instance_id in {
+            str(payload.get("inviter_id") or ""),
+            str(payload.get("target_peer_id") or ""),
+        }
         invitation = session.get(GroupInvitation, invitation_id)
         conversation_payload = dict(event.get("payload", {}).get("conversation") or {})
         if event["type"] == "group.invited":
+            if not direct_party:
+                return
             if invitation is None:
                 invitation = GroupInvitation(
                     id=invitation_id,
@@ -1166,15 +1227,16 @@ class DesktopAppService:
                 broadcast=False,
                 scope="global",
             )
-        self._record_event(
-            session,
-            event["type"],
-            None,
-            invitation_id,
-            {"invitation": payload, "conversation": conversation_payload or None},
-            broadcast=False,
-            scope="global",
-        )
+        if direct_party:
+            self._record_event(
+                session,
+                event["type"],
+                None,
+                invitation_id,
+                {"invitation": payload, "conversation": conversation_payload or None},
+                broadcast=False,
+                scope="global",
+            )
 
     def _apply_remote_message_ack_event(self, session: Session, event: dict[str, Any]):
         payload = dict(event.get("payload") or {})
@@ -1660,7 +1722,8 @@ class DesktopAppService:
             prompt = job.prompt if job.prompt else (user_message.content if user_message else "")
 
         try:
-            async for token in self.inference.stream_tokens(prompt):
+            # stream_tokens yields full cumulative text each step (matches InferenceEngine.generate_stream).
+            async for cumulative_text in self.inference.stream_tokens(prompt):
                 with session_scope(self.engine) as session:
                     job = session.get(InferenceJob, job_id)
                     if job is None:
@@ -1699,7 +1762,7 @@ class DesktopAppService:
                         return
                     assistant_metadata = json.loads(assistant.metadata_json or "{}")
                     broadcast_job_events = assistant_metadata.get("local_draft") is not True
-                    assistant.content += token
+                    assistant.content = cumulative_text
                     assistant.status = "streaming"
                     assistant.updated_at = utcnow()
                     job.status = "streaming"
@@ -1711,7 +1774,7 @@ class DesktopAppService:
                         {
                             "message_id": assistant.id,
                             "job_id": job.id,
-                            "token": token,
+                            "token": cumulative_text,
                         },
                         broadcast=broadcast_job_events,
                     )

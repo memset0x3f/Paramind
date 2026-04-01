@@ -48,10 +48,13 @@ class LocalInferenceEngine:
         )
         input_ids = self.tokenizer(text, return_tensors="pt").input_ids.to(self.device)
 
-        kv_cache = None
         eos_ids = set(self.tokenizer.all_special_ids)
         if self.tokenizer.eos_token_id is not None:
             eos_ids.add(self.tokenizer.eos_token_id)
+
+        generated_ids: list[int] = []
+        decoded_so_far = ""
+        kv_cache = None
 
         with torch.no_grad():
             for _ in range(max_tokens):
@@ -70,7 +73,17 @@ class LocalInferenceEngine:
                 if token_id in eos_ids:
                     break
 
-                yield self.tokenizer.decode([token_id], skip_special_tokens=False)
+                generated_ids.append(token_id)
+                new_text = self.tokenizer.decode(
+                    generated_ids,
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=False,
+                )
+                # Cumulative text only: slicing deltas from full decode breaks UTF-8 for some tokenizers.
+                if new_text != decoded_so_far:
+                    yield new_text
+                    decoded_so_far = new_text
+
                 input_ids = next_id
 
     def generate(
@@ -80,11 +93,12 @@ class LocalInferenceEngine:
         temperature: float = 0.0,
         system_prompt: str = "You are a helpful assistant.",
     ) -> str:
-        return "".join(
-            self.generate_stream(
-                prompt,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                system_prompt=system_prompt,
-            )
-        )
+        last = ""
+        for chunk in self.generate_stream(
+            prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            system_prompt=system_prompt,
+        ):
+            last = chunk
+        return last

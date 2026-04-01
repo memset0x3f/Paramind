@@ -68,10 +68,13 @@ class DistributedInferenceEngine:
         )
         input_ids = tokenizer(text, return_tensors="pt").input_ids.to(self.device)
 
-        kv_caches = [None] * len(self.shard_configs)
         eos_ids: Set[int] = set(tokenizer.all_special_ids)
         if tokenizer.eos_token_id is not None:
             eos_ids.add(tokenizer.eos_token_id)
+
+        kv_caches = [None] * len(self.shard_configs)
+        generated_ids: list[int] = []
+        decoded_so_far = ""
 
         with torch.no_grad():
             for _ in range(max_tokens):
@@ -94,7 +97,17 @@ class DistributedInferenceEngine:
                 if token_id in eos_ids:
                     break
 
-                yield tokenizer.decode([token_id], skip_special_tokens=False)
+                generated_ids.append(token_id)
+                new_text = tokenizer.decode(
+                    generated_ids,
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=False,
+                )
+                # Cumulative text only (same contract as LocalInferenceEngine.generate_stream).
+                if new_text != decoded_so_far:
+                    yield new_text
+                    decoded_so_far = new_text
+
                 input_ids = next_id
 
     def _remote_forward(self, shard_index, x, kv_cache):

@@ -190,15 +190,19 @@ function updateScrollIndicator() {
   const scrolledUp = state.userScrolledUpByConversation.get(conversationId)
   const unread = state.unreadWhileScrolledUp.get(conversationId) || 0
   const indicator = $('scrollIndicator')
+  const countEl = $('scrollIndicatorCount')
   if (!indicator) return
-  if (scrolledUp && unread > 0) {
-    $('scrollIndicatorCount').textContent = String(unread)
+  if (scrolledUp) {
+    if (unread > 0) {
+      countEl.textContent = `${unread} 条新消息`
+      countEl.hidden = false
+    } else {
+      countEl.hidden = true
+    }
     indicator.hidden = false
   } else {
     indicator.hidden = true
-    if (!scrolledUp) {
-      state.unreadWhileScrolledUp.set(conversationId, 0)
-    }
+    state.unreadWhileScrolledUp.set(conversationId, 0)
   }
 }
 
@@ -1230,14 +1234,15 @@ function patchMessageNode(conversationId, message) {
     }
     indexMessageNode(registry, replacement)
     reorderTimelineNodes(conversationId)
-    // Show scroll indicator if user is scrolled up
+    // Show scroll indicator if user is scrolled up (exclude own messages)
     if (conversationId === state.activeConversationId) {
       const scrolledUp = state.userScrolledUpByConversation.get(conversationId)
-      if (scrolledUp) {
+      const isSelf = message.sender_id && message.sender_id === state.self?.id
+      if (scrolledUp && !isSelf) {
         const count = (state.unreadWhileScrolledUp.get(conversationId) || 0) + 1
         state.unreadWhileScrolledUp.set(conversationId, count)
-        updateScrollIndicator()
       }
+      updateScrollIndicator()
     }
     return
   }
@@ -1268,14 +1273,17 @@ function patchMessageNode(conversationId, message) {
   const contentNode = registry.messageContentNodeById.get(messageId)
   if (contentNode) {
     if (message.metadata?.local_draft === true && message.status === 'streaming') {
+      // During streaming: fast textContent path
       if (!message.content && !contentNode.dataset.streamingStarted) {
         setTypingIndicator(contentNode)
       } else {
         contentNode.dataset.streamingStarted = '1'
         contentNode.textContent = message.content || ''
       }
-    } else if (!contentNode.dataset.streamingStarted) {
-      contentNode.textContent = message.content || ''
+    } else {
+      // Streaming complete or non-streaming update: render markdown
+      delete contentNode.dataset.streamingStarted
+      contentNode.innerHTML = renderMarkdown(message.content || '')
     }
   }
 

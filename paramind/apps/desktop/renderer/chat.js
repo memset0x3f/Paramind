@@ -51,6 +51,7 @@ const state = {
   timelineRegistryByConversationId: new Map(),
   activeTimelineConversationId: null,
   userScrolledUpByConversation: new Map(),
+  unreadWhileScrolledUp: new Map(), // conversationId → count
   renderedRouteSignature: null,
   renderedDiagnosticsSignature: null,
   draftEditStateByMessageId: new Map(),
@@ -178,6 +179,23 @@ function getActiveConversation() {
 
 function getConversationMessages(conversationId) {
   return state.messagesByConversation.get(conversationId) || []
+}
+
+function updateScrollIndicator() {
+  const conversationId = state.activeConversationId
+  const scrolledUp = state.userScrolledUpByConversation.get(conversationId)
+  const unread = state.unreadWhileScrolledUp.get(conversationId) || 0
+  const indicator = $('scrollIndicator')
+  if (!indicator) return
+  if (scrolledUp && unread > 0) {
+    $('scrollIndicatorCount').textContent = String(unread)
+    indicator.hidden = false
+  } else {
+    indicator.hidden = true
+    if (!scrolledUp) {
+      state.unreadWhileScrolledUp.set(conversationId, 0)
+    }
+  }
 }
 
 function getMessageById(conversationId, messageId) {
@@ -1184,6 +1202,8 @@ function showTimelinePane(conversationId) {
   })
   state.activeTimelineConversationId = conversationId
   list.scrollTop = list.scrollHeight
+  state.unreadWhileScrolledUp.set(conversationId, 0)
+  updateScrollIndicator()
 }
 
 function patchMessageNode(conversationId, message) {
@@ -1206,6 +1226,15 @@ function patchMessageNode(conversationId, message) {
     }
     indexMessageNode(registry, replacement)
     reorderTimelineNodes(conversationId)
+    // Show scroll indicator if user is scrolled up
+    if (conversationId === state.activeConversationId) {
+      const scrolledUp = state.userScrolledUpByConversation.get(conversationId)
+      if (scrolledUp) {
+        const count = (state.unreadWhileScrolledUp.get(conversationId) || 0) + 1
+        state.unreadWhileScrolledUp.set(conversationId, count)
+        updateScrollIndicator()
+      }
+    }
     return
   }
   const existingKind = existingNode.dataset.cardKind || ''
@@ -1493,6 +1522,7 @@ function bindMessageActions() {
     if (!conversationId) return
     const isAtBottom = list.scrollHeight - list.scrollTop - list.clientHeight < SCROLL_THRESHOLD_PX
     state.userScrolledUpByConversation.set(conversationId, !isAtBottom)
+    updateScrollIndicator()
   })
 
   $('messageList').addEventListener('input', (event) => {
@@ -2576,6 +2606,12 @@ async function init() {
     $('modeAiBtn').classList.add('active')
     $('modeTextBtn').classList.remove('active')
     $('composerInput').placeholder = '输入内容，将生成 AI 草稿…'
+  })
+  $('scrollIndicator')?.addEventListener('click', () => {
+    const list = $('messageList')
+    list.scrollTop = list.scrollHeight
+    state.unreadWhileScrolledUp.set(state.activeConversationId, 0)
+    updateScrollIndicator()
   })
   $('stopBtn').addEventListener('click', stopJob)
   $('retryBtn').addEventListener('click', () => retryLatestMessage())

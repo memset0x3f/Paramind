@@ -740,3 +740,38 @@ test('marked.js and DOMPurify are loaded and render markdown bold and inline cod
   expect(cardHtml).toContain('<strong>')
   expect(cardHtml).toContain('<code>')
 })
+
+test('scroll indicator appears when user is scrolled up and a new message arrives', async ({ page }) => {
+  await page.goto(`${baseUrl}/dev_harness.html?fixture=bootstrap_two_peers`)
+  await expect(page.locator('#messageList')).toContainText('Welcome to ParaMind')
+
+  // Simulate user scrolled up by setting scrollTop to 0 and dispatching scroll event
+  await page.locator('#messageList').evaluate((el) => { el.scrollTop = 0 })
+  await page.locator('#messageList').dispatchEvent('scroll')
+
+  // Inject a new message while the user is scrolled up
+  await page.evaluate(() => {
+    window.ParaMindHarness.emitConversationEvent({
+      type: 'message.created',
+      conversation_id: 'general',
+      entity_id: 'msg-scroll-test',
+      payload: {
+        message: {
+          id: 'msg-scroll-test',
+          conversation_id: 'general',
+          role: 'peer',
+          sender_name: 'Peer B',
+          content: 'New message while scrolled up',
+          status: 'sent',
+          metadata: {},
+          created_at: '2026-04-01T10:00:00Z',
+          updated_at: '2026-04-01T10:00:00Z',
+        },
+      },
+    })
+  })
+
+  // The scroll indicator should be visible with count ≥ 1
+  await expect(page.locator('#scrollIndicator')).toBeVisible({ timeout: 2000 })
+  await expect(page.locator('#scrollIndicatorCount')).toContainText('1')
+})

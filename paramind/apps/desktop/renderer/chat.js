@@ -54,6 +54,7 @@ const state = {
   renderedRouteSignature: null,
   renderedDiagnosticsSignature: null,
   draftEditStateByMessageId: new Map(),
+  composerMode: 'text', // 'text' | 'ai'
 }
 
 let chatState = CHAT_STATE?.createChatState ? CHAT_STATE.createChatState() : null
@@ -2045,11 +2046,15 @@ async function sendMessage(event) {
   if (!conversation || ['dm-pending', 'group-pending'].includes(conversation.kind)) return
 
   const input = $('composerInput')
-  const content = input.value.trim()
-  if (!content) return
+  const rawContent = input.value.trim()
+  if (!rawContent) return
+  const isAiRequest = state.composerMode === 'ai' || isAiRequestContent(rawContent)
+  const content = (state.composerMode === 'ai' && !isAiRequestContent(rawContent))
+    ? `@AI ${rawContent}`
+    : rawContent
 
   $('sendBtn').disabled = true
-  setComposerStatus(isAiRequestContent(content) ? '正在发送 @AI 请求…' : 'Sending message…')
+  setComposerStatus(isAiRequest ? '正在发送 @AI 请求…' : 'Sending message…')
   try {
     const userMessage = await callApi(`/api/conversations/${conversation.id}/messages`, {
       method: 'POST',
@@ -2061,7 +2066,7 @@ async function sendMessage(event) {
     patchMessageNode(conversation.id, userMessage)
     patchConversationSelection()
 
-    if (isAiRequestContent(content)) {
+    if (isAiRequest) {
       await triggerAIDraft(conversation.id, { sourceMessageId: userMessage.id })
       return
     }
@@ -2560,6 +2565,18 @@ async function init() {
     })
   }
 
+  $('modeTextBtn')?.addEventListener('click', () => {
+    state.composerMode = 'text'
+    $('modeTextBtn').classList.add('active')
+    $('modeAiBtn').classList.remove('active')
+    $('composerInput').placeholder = '输入消息…'
+  })
+  $('modeAiBtn')?.addEventListener('click', () => {
+    state.composerMode = 'ai'
+    $('modeAiBtn').classList.add('active')
+    $('modeTextBtn').classList.remove('active')
+    $('composerInput').placeholder = '输入内容，将生成 AI 草稿…'
+  })
   $('stopBtn').addEventListener('click', stopJob)
   $('retryBtn').addEventListener('click', () => retryLatestMessage())
   $('newGroupBtn').addEventListener('click', createGroupConversation)

@@ -693,6 +693,18 @@ test('composer textarea auto-expands on multi-line input', async ({ page }) => {
   expect(expandedHeight).toBeGreaterThan(initialHeight)
 })
 
+test('@AI mode toggle activates AI mode and updates placeholder', async ({ page }) => {
+  await page.goto(`${baseUrl}/dev_harness.html?fixture=bootstrap_two_peers`)
+  const aiBtn = page.locator('#modeAiBtn')
+  const textBtn = page.locator('#modeTextBtn')
+  await expect(textBtn).toHaveClass(/active/)
+  await aiBtn.click()
+  await expect(aiBtn).toHaveClass(/active/)
+  await expect(textBtn).not.toHaveClass(/active/)
+  const placeholder = await page.locator('#composerInput').getAttribute('placeholder')
+  expect(placeholder).toContain('AI 草稿')
+})
+
 test('marked.js and DOMPurify are loaded and render markdown bold and inline code in AI messages', async ({ page }) => {
   await openHarness(page, 'ai_streaming_draft')
 

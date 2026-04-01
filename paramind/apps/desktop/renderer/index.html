@@ -530,6 +530,40 @@
         justify-content: space-between;
         gap: 10px;
       }
+      .composer-mode {
+        display: flex;
+        gap: 6px;
+        margin-bottom: 10px;
+      }
+      .mode-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        font-size: 12px;
+        font-family: var(--font-sans);
+        font-weight: 500;
+        border-radius: 8px;
+        border: 1px solid var(--line-strong);
+        background: transparent;
+        color: var(--muted);
+        cursor: pointer;
+        transition: all .15s ease;
+      }
+      .mode-btn.active.mode-text {
+        background: var(--accent-dim);
+        border-color: var(--accent-glow);
+        color: var(--accent);
+      }
+      .mode-btn.active.mode-ai {
+        background: var(--purple-dim);
+        border-color: rgba(123,97,255,.4);
+        color: var(--purple);
+      }
+      .mode-btn:not(.active):hover {
+        background: rgba(255,255,255,.04);
+        color: var(--text);
+      }
       .peer-card, .route-node, .diag-card {
         border: 1px solid var(--line);
         border-radius: 12px;
@@ -922,7 +956,17 @@
         </div>
         <div class="messages" id="messageList"></div>
         <form class="composer" id="composerForm">
-          <textarea id="composerInput" placeholder="输入普通消息直接发送；输入 @AI 开头则只在本地生成 AI 草稿卡片。"></textarea>
+          <div class="composer-mode">
+            <button type="button" id="modeTextBtn" class="mode-btn mode-text active">
+              <svg class="ico ico-sm"><use href="#ico-message-square"/></svg>
+              <span>普通消息</span>
+            </button>
+            <button type="button" id="modeAiBtn" class="mode-btn mode-ai">
+              <svg class="ico ico-sm"><use href="#ico-zap"/></svg>
+              <span>@AI 草稿</span>
+            </button>
+          </div>
+          <textarea id="composerInput" placeholder="输入消息…"></textarea>
           <div class="composer-actions">
             <div class="mono" id="composerStatus">Ready</div>
             <div style="display:flex; gap:8px;">

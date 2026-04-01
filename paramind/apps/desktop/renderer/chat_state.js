@@ -173,9 +173,11 @@ function getConversationPreviewText(content, maxLength = 28) {
 }
 
 function normalizeRelationship(relationship) {
+  const normalizedStatus = relationship?.relationship || relationship?.status || 'none'
   return {
     peer_id: relationship?.peer_id || relationship?.peerId || '',
-    status: relationship?.status || 'none',
+    status: normalizedStatus,
+    relationship: normalizedStatus,
     conversation_id: relationship?.conversation_id || relationship?.conversationId || null,
     request_id: relationship?.request_id || relationship?.requestId || null,
   }
@@ -259,6 +261,17 @@ function formatClockTime(value, options = {}) {
   return formatter.format(date)
 }
 
+function getConversationParticipantIdsForDisplay(conversation) {
+  return [...(conversation?.participant_ids || [])]
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+    .filter((item) => !['assistant', 'ai'].includes(item.toLowerCase()))
+}
+
+function getConversationParticipantCount(conversation) {
+  return getConversationParticipantIdsForDisplay(conversation).length
+}
+
 function getStreamStartAfter({
   knownConversationEventId,
   bootstrapLatestEventId,
@@ -316,6 +329,53 @@ function resolvePostDmRequestSelection({
   }
 
   return { nextConversationId: null, force: true }
+}
+
+function hasConversationShellChange(currentConversation, nextConversation) {
+  if (!nextConversation) return false
+  if (!currentConversation) return true
+
+  return (
+    String(currentConversation.title || '') !== String(nextConversation.title || '')
+    || String(currentConversation.kind || '') !== String(nextConversation.kind || '')
+    || getConversationParticipantIdsForDisplay(currentConversation).join('|')
+      !== getConversationParticipantIdsForDisplay(nextConversation).join('|')
+  )
+}
+
+function shouldRefreshActiveShellForEvent(event, activeConversationId, currentConversation = null) {
+  const activeId = String(activeConversationId || '')
+  if (!activeId) return false
+
+  const conversationId = String(
+    event?.payload?.conversation?.id
+      || event?.payload?.conversation_id
+      || event?.conversation_id
+      || '',
+  )
+
+  switch (event?.type) {
+    case 'conversation.created':
+    case 'conversation.updated':
+      return conversationId === activeId
+        && hasConversationShellChange(currentConversation, event?.payload?.conversation || null)
+    case 'conversation.deleted':
+      return conversationId === activeId
+    case 'dm.requested':
+    case 'dm.accepted':
+    case 'dm.rejected': {
+      const requestId = String(event?.payload?.request?.id || event?.payload?.request_id || event?.entity_id || '')
+      return (requestId ? `request:${requestId}` === activeId : false) || (conversationId === activeId)
+    }
+    case 'group.invited':
+    case 'group.accepted':
+    case 'group.rejected': {
+      const invitationId = String(event?.payload?.invitation?.id || event?.payload?.invitation_id || event?.entity_id || '')
+      return (invitationId ? `invite:${invitationId}` === activeId : false) || (conversationId === activeId)
+    }
+    default:
+      return false
+  }
 }
 
 function upsertById(items, nextItem) {
@@ -708,6 +768,7 @@ const chatStateApi = {
   createSystemMessageForEvent,
   getCardKind,
   getConversationPreviewText,
+  getConversationParticipantCount,
   formatClockTime,
   getConversationSelectionMode,
   getConversationSelectionRenderScope,
@@ -718,6 +779,8 @@ const chatStateApi = {
   getStatusTone,
   getPeerActionState,
   resolvePostDmRequestSelection,
+  hasConversationShellChange,
+  shouldRefreshActiveShellForEvent,
 }
 
 if (typeof module !== 'undefined' && module.exports) {

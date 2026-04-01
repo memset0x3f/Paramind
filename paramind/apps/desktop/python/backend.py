@@ -105,10 +105,13 @@ def create_app(test_mode: bool = False, settings_overrides: Optional[dict] = Non
     @app.post("/api/group/invitations", status_code=201)
     def create_group_invitations(payload: dict):
         title = str(payload.get("title") or "").strip()
+        conversation_id = str(payload.get("conversation_id") or "").strip() or None
         target_peer_ids = [str(item).strip() for item in list(payload.get("target_peer_ids") or []) if str(item).strip()]
-        if not title or not target_peer_ids:
-            raise HTTPException(status_code=400, detail="title and target_peer_ids are required")
-        created = service.create_group_invitations(title, target_peer_ids)
+        if not target_peer_ids:
+            raise HTTPException(status_code=400, detail="target_peer_ids are required")
+        if not title and not conversation_id:
+            raise HTTPException(status_code=400, detail="title or conversation_id is required")
+        created = service.create_group_invitations(title, target_peer_ids, conversation_id=conversation_id)
         if created is None:
             raise HTTPException(status_code=400, detail="unable to create group invitations")
         return created

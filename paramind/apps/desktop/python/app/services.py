@@ -148,12 +148,20 @@ class DesktopAppService:
             ).all()
         ]
 
+    def _is_virtual_participant(self, peer_id: str | None):
+        return str(peer_id or "").strip().lower() in {"assistant", "ai"}
+
     def _conversation_summary_participant_ids(self, session: Session, conversation: Conversation):
-        participant_ids = set(self._conversation_participant_ids(session, conversation.id))
+        participant_ids = {
+            peer_id
+            for peer_id in self._conversation_participant_ids(session, conversation.id)
+            if not self._is_virtual_participant(peer_id)
+        }
         if conversation.id == self.default_conversation_id and conversation.kind == "group":
             participant_ids |= {
                 peer.id
                 for peer in session.exec(select(Peer)).all()
+                if not self._is_virtual_participant(peer.id)
             }
         return sorted(participant_ids)
 
@@ -215,6 +223,8 @@ class DesktopAppService:
         self._ensure_participant(session, existing.id, self.settings.instance_id)
 
     def _ensure_participant(self, session: Session, conversation_id: str, peer_id: str):
+        if self._is_virtual_participant(peer_id):
+            return
         existing = session.exec(
             select(Participant)
             .where(Participant.conversation_id == conversation_id)
@@ -352,6 +362,34 @@ class DesktopAppService:
             "participant_ids": self._conversation_summary_participant_ids(session, conversation),
             "last_message": self._serialize_message(last_message) if last_message else None,
         }
+
+    def _serialize_conversation_messages(self, session: Session, conversation_id: str):
+        rows = session.exec(
+            select(Message)
+            .where(Message.conversation_id == conversation_id)
+            .where(~Message.metadata_json.contains('"local_draft": true'))
+            .order_by(Message.created_at, Message.id)
+        ).all()
+        return [self._serialize_message(item) for item in rows]
+
+    def _latest_conversation_event_id(self, session: Session, conversation_id: str):
+        return session.exec(
+            select(EventLog.id)
+            .where(EventLog.scope == "conversation")
+            .where(EventLog.conversation_id == conversation_id)
+            .order_by(desc(EventLog.id))
+            .limit(1)
+        ).first() or 0
+
+    def _backfill_conversation_history_from_transport(self, session: Session, conversation_id: str):
+        for event in self.p2p.list_events(after=0, limit=None):
+            if str(event.get("conversation_id") or "") != conversation_id:
+                continue
+            event_type = str(event.get("type") or "")
+            if event_type in {"message.created", "message.updated"}:
+                self._apply_remote_message_event(session, event)
+            elif event_type in {"message.ack", "message.read"}:
+                self._apply_remote_message_ack_event(session, event)
 
     def bootstrap_payload(self):
         self.process_transport_events()
@@ -543,27 +581,66 @@ class DesktopAppService:
             )
             return payload
 
-    def create_group_invitations(self, title: str, target_peer_ids: list[str]):
+    def create_group_invitations(
+        self,
+        title: str,
+        target_peer_ids: list[str],
+        conversation_id: str | None = None,
+    ):
         with session_scope(self.engine) as session:
-            unique_participants = sorted({self.settings.instance_id, *[str(item) for item in target_peer_ids if str(item).strip()]})
-            if len(unique_participants) < 2:
+            requested_target_ids = sorted({str(item) for item in target_peer_ids if str(item).strip() and str(item) != self.settings.instance_id})
+            if not requested_target_ids:
                 return None
-            conversation = Conversation(title=title, kind="group")
-            session.add(conversation)
-            session.flush()
-            self._ensure_participant(session, conversation.id, self.settings.instance_id)
-            conversation.updated_at = utcnow()
+
+            conversation = session.get(Conversation, conversation_id) if conversation_id else None
+            created_conversation = False
+
+            if conversation_id:
+                if conversation is None or conversation.kind != "group":
+                    return None
+                existing_participants = set(self._conversation_participant_ids(session, conversation.id))
+                if self.settings.instance_id not in existing_participants:
+                    return None
+                if conversation.id == self.default_conversation_id:
+                    return None
+                title = conversation.title
+            else:
+                unique_participants = sorted({self.settings.instance_id, *requested_target_ids})
+                if len(unique_participants) < 2:
+                    return None
+                conversation = Conversation(title=title, kind="group")
+                session.add(conversation)
+                session.flush()
+                self._ensure_participant(session, conversation.id, self.settings.instance_id)
+                created_conversation = True
+
+            pending_targets = {
+                row.target_peer_id
+                for row in session.exec(
+                    select(GroupInvitation)
+                    .where(GroupInvitation.conversation_id == conversation.id)
+                    .where(GroupInvitation.status == "pending")
+                ).all()
+            }
+            existing_participants = set(self._conversation_participant_ids(session, conversation.id))
+            invite_targets = [
+                peer_id
+                for peer_id in requested_target_ids
+                if peer_id not in existing_participants and peer_id not in pending_targets
+            ]
+            if not invite_targets:
+                return None
+
+            summary_participants = sorted(existing_participants)
             conversation_payload = self._serialize_conversation(session, conversation)
             invitations = []
-            for peer_id in unique_participants:
-                if peer_id == self.settings.instance_id:
-                    continue
+            for peer_id in invite_targets:
                 invitation = GroupInvitation(
                     conversation_id=conversation.id,
                     inviter_id=self.settings.instance_id,
                     target_peer_id=peer_id,
                     title=title,
-                    participant_ids_json=json.dumps(unique_participants, ensure_ascii=False),
+                    participant_ids_json=json.dumps(summary_participants, ensure_ascii=False),
                     status="pending",
                 )
                 session.add(invitation)
@@ -575,6 +652,16 @@ class DesktopAppService:
                     None,
                     invitation.id,
                     {"invitation": invitations[-1], "conversation": conversation_payload},
+                    scope="global",
+                )
+            if created_conversation:
+                self._record_event(
+                    session,
+                    "conversation.created",
+                    conversation.id,
+                    conversation.id,
+                    {"conversation": conversation_payload},
+                    broadcast=False,
                     scope="global",
                 )
             return {"conversation": conversation_payload, "invitations": invitations}
@@ -663,6 +750,7 @@ class DesktopAppService:
             return payload
 
     def respond_group_invitation(self, invitation_id: str, accept: bool):
+        self.process_transport_events()
         with session_scope(self.engine) as session:
             invitation = session.get(GroupInvitation, invitation_id)
             if invitation is None or invitation.target_peer_id != self.settings.instance_id:
@@ -680,6 +768,8 @@ class DesktopAppService:
 
             conversation = session.get(Conversation, invitation.conversation_id)
             conversation_payload = None
+            messages_payload = []
+            latest_conversation_event_id = 0
             if accept:
                 if conversation is None:
                     conversation = Conversation(
@@ -690,10 +780,13 @@ class DesktopAppService:
                     session.add(conversation)
                     session.flush()
                 existing_participants = set(self._conversation_participant_ids(session, conversation.id))
-                for peer_id in sorted(existing_participants | {invitation.inviter_id, self.settings.instance_id}):
+                for peer_id in sorted(existing_participants | set(participant_ids) | {invitation.inviter_id, self.settings.instance_id}):
                     self._ensure_participant(session, conversation.id, peer_id)
                 conversation.updated_at = utcnow()
+                self._backfill_conversation_history_from_transport(session, conversation.id)
                 conversation_payload = self._serialize_conversation(session, conversation)
+                messages_payload = self._serialize_conversation_messages(session, conversation.id)
+                latest_conversation_event_id = int(self._latest_conversation_event_id(session, conversation.id))
                 self._record_event(
                     session,
                     "conversation.created",
@@ -710,11 +803,21 @@ class DesktopAppService:
                 event_type,
                 None,
                 invitation.id,
-                {"invitation": payload, "conversation": conversation_payload},
+                {
+                    "invitation": payload,
+                    "conversation": conversation_payload,
+                    "messages": messages_payload,
+                    "latest_conversation_event_id": latest_conversation_event_id,
+                },
                 scope="global",
             )
             session.delete(invitation)
-            return payload
+            return {
+                "invitation": payload,
+                "conversation": conversation_payload,
+                "messages": messages_payload,
+                "latest_conversation_event_id": latest_conversation_event_id,
+            } if accept else payload
 
     def _ensure_remote_conversation(self, session: Session, conversation_payload: dict[str, Any]):
         conversation_id = str(conversation_payload["id"])
@@ -840,11 +943,22 @@ class DesktopAppService:
         payload = dict(event.get("payload", {}).get("message") or {})
         if not payload:
             return
+        existing_conversation = session.get(Conversation, str(payload["conversation_id"]))
+        participant_ids = {str(item) for item in payload.get("metadata", {}).get("participant_ids") or []}
+        if (
+            existing_conversation is None
+            and participant_ids
+            and self.settings.instance_id not in participant_ids
+            and str(payload["conversation_id"]) != self.default_conversation_id
+        ):
+            return
+        if existing_conversation is not None and existing_conversation.kind == "group":
+            participant_ids |= set(self._conversation_participant_ids(session, existing_conversation.id))
         conversation_payload = {
             "id": payload["conversation_id"],
             "title": payload.get("metadata", {}).get("conversation_title") or self.default_conversation_title,
             "kind": payload.get("metadata", {}).get("conversation_kind") or "group",
-            "participant_ids": payload.get("metadata", {}).get("participant_ids") or [],
+            "participant_ids": sorted(participant_ids),
         }
         conversation, _ = self._ensure_remote_conversation(session, conversation_payload)
         message = session.get(Message, payload["id"])
@@ -1599,14 +1713,6 @@ class DesktopAppService:
                             "job_id": job.id,
                             "token": token,
                         },
-                        broadcast=broadcast_job_events,
-                    )
-                    self._record_event(
-                        session,
-                        "message.updated",
-                        job.conversation_id,
-                        assistant.id,
-                        {"message": self._serialize_message(assistant)},
                         broadcast=broadcast_job_events,
                     )
 

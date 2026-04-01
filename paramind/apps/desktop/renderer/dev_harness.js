@@ -22,6 +22,7 @@ function createHarnessController({
   let globalSubscribers = new Set()
   let conversationEventsById = new Map()
   let conversationSubscribersById = new Map()
+  let groupAcceptResponsesByInvitationId = new Map()
   let fixtureName = initialFixture
   let nextLocalId = 1
 
@@ -46,6 +47,7 @@ function createHarnessController({
     conversationState = chatState.createChatState({ activeConversationId: bootstrapModel.activeConversationId })
     conversationEventsById = new Map()
     globalEvents = []
+    groupAcceptResponsesByInvitationId = new Map(Object.entries(payload.group_accept_responses || {}).map(([key, value]) => [key, cloneJson(value)]))
     nextEventId = 1
     nextLocalId = 1
 
@@ -185,6 +187,113 @@ function createHarnessController({
     return conversation
   }
 
+  function setGroupAcceptResponse(invitationId, response) {
+    groupAcceptResponsesByInvitationId.set(invitationId, cloneJson(response))
+    return cloneJson(response)
+  }
+
+  function upsertConversationModel(conversation) {
+    const existingIndex = bootstrapModel.conversations.findIndex((item) => item.id === conversation.id)
+    if (existingIndex >= 0) {
+      bootstrapModel.conversations.splice(existingIndex, 1, cloneJson(conversation))
+    } else {
+      bootstrapModel.conversations.unshift(cloneJson(conversation))
+    }
+  }
+
+  function createGroupInvitations({ title = '', targetPeerIds = [], conversationId = null } = {}) {
+    const uniqueTargets = [...new Set((targetPeerIds || []).filter((peerId) => peerId && peerId !== bootstrapModel.self?.id))]
+    if (!uniqueTargets.length) {
+      throw new Error('target_peer_ids are required')
+    }
+
+    const conversation = conversationId
+      ? bootstrapModel.conversations.find((item) => item.id === conversationId)
+      : {
+          id: `group-${nextLocalId++}`,
+          title: title || 'New Group',
+          kind: 'group',
+          updated_at: new Date().toISOString(),
+          participant_ids: [bootstrapModel.self?.id || 'peer-a'],
+          last_message: null,
+        }
+
+    if (!conversation) {
+      throw new Error('conversation not found')
+    }
+
+    if (!conversationId) {
+      upsertConversationModel(conversation)
+    }
+
+    const pendingTargets = new Set(
+      bootstrapModel.groupInvitations
+        .filter((item) => item.status === 'pending' && item.conversation_id === conversation.id)
+        .map((item) => item.target_peer_id),
+    )
+    const existingParticipants = new Set(conversation.participant_ids || [])
+    const invitations = uniqueTargets
+      .filter((peerId) => !existingParticipants.has(peerId) && !pendingTargets.has(peerId))
+      .map((peerId) => ({
+        id: `invite-${nextLocalId++}`,
+        conversation_id: conversation.id,
+        inviter_id: bootstrapModel.self?.id || 'peer-a',
+        target_peer_id: peerId,
+        title: conversation.title,
+        participant_ids: [...new Set([...(conversation.participant_ids || []), peerId])],
+        direction: 'outbound',
+        status: 'pending',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }))
+
+    for (const invitation of invitations) {
+      bootstrapModel.groupInvitations.unshift(cloneJson(invitation))
+    }
+    return { conversation: cloneJson(conversation), invitations: cloneJson(invitations) }
+  }
+
+  function acceptGroupInvitation(invitationId) {
+    const invitation = bootstrapModel.groupInvitations.find((item) => item.id === invitationId)
+    if (!invitation) throw new Error('group invitation not found')
+    const response = cloneJson(groupAcceptResponsesByInvitationId.get(invitationId) || {
+      invitation: { ...invitation, status: 'accepted', updated_at: new Date().toISOString() },
+      conversation: {
+        id: invitation.conversation_id,
+        title: invitation.title,
+        kind: 'group',
+        updated_at: new Date().toISOString(),
+        participant_ids: [...new Set(invitation.participant_ids || [bootstrapModel.self?.id || 'peer-a'])],
+        last_message: null,
+      },
+      messages: [],
+      latest_conversation_event_id: 0,
+    })
+
+    bootstrapModel.groupInvitations = bootstrapModel.groupInvitations.filter((item) => item.id !== invitationId)
+    upsertConversationModel(response.conversation)
+    conversationState.messagesByConversation.set(response.conversation.id, cloneJson(response.messages || []))
+    bootstrapModel.latestConversationEventIds.set(response.conversation.id, Number(response.latest_conversation_event_id || 0))
+    return response
+  }
+
+  function rejectGroupInvitation(invitationId) {
+    const invitation = bootstrapModel.groupInvitations.find((item) => item.id === invitationId)
+    if (!invitation) throw new Error('group invitation not found')
+    bootstrapModel.groupInvitations = bootstrapModel.groupInvitations.filter((item) => item.id !== invitationId)
+    return { invitation: { ...cloneJson(invitation), status: 'rejected', updated_at: new Date().toISOString() } }
+  }
+
+  function closeConversation(conversationId) {
+    const conversation = bootstrapModel.conversations.find((item) => item.id === conversationId)
+    if (!conversation) return { conversation_id: conversationId, kind: 'unknown' }
+    bootstrapModel.conversations = bootstrapModel.conversations.filter((item) => item.id !== conversationId)
+    bootstrapModel.groupInvitations = bootstrapModel.groupInvitations.filter((item) => item.conversation_id !== conversationId)
+    conversationState.messagesByConversation.delete(conversationId)
+    bootstrapModel.latestConversationEventIds.delete(conversationId)
+    return { conversation_id: conversationId, kind: conversation.kind }
+  }
+
   function createAssistantDraft(conversationId = bootstrapModel.activeConversationId || 'general') {
     const draft = {
       id: `draft-${nextLocalId++}`,
@@ -197,6 +306,8 @@ function createHarnessController({
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }
+    const currentMessages = conversationState.messagesByConversation.get(conversationId) || []
+    conversationState.messagesByConversation.set(conversationId, [...currentMessages, cloneJson(draft)])
     emitConversationEvent({ type: 'message.created', conversation_id: conversationId, entity_id: draft.id, payload: { message: draft } })
     return draft
   }
@@ -204,6 +315,12 @@ function createHarnessController({
   function appendAssistantToken(conversationId, messageId, token) {
     const currentMessage = getMessages(conversationId).find((item) => item.id === messageId)
     if (currentMessage) {
+      const nextMessages = (conversationState.messagesByConversation.get(conversationId) || []).map((item) => (
+        item.id === messageId
+          ? { ...item, content: `${item.content || ''}${token}`, status: 'streaming', updated_at: new Date().toISOString() }
+          : item
+      ))
+      conversationState.messagesByConversation.set(conversationId, nextMessages)
       emitConversationEvent({
         type: 'message.updated',
         conversation_id: conversationId,
@@ -220,6 +337,28 @@ function createHarnessController({
       return
     }
     emitConversationEvent({ type: 'message.token', conversation_id: conversationId, entity_id: messageId, payload: { message_id: messageId, token } })
+  }
+
+  function updateAssistantDraft(draftId, content) {
+    for (const [conversationId, messages] of conversationState.messagesByConversation.entries()) {
+      const currentMessage = messages.find((item) => item.id === draftId)
+      if (!currentMessage) continue
+      const updated = {
+        ...cloneJson(currentMessage),
+        content,
+        updated_at: new Date().toISOString(),
+      }
+      const nextMessages = messages.map((item) => (item.id === draftId ? cloneJson(updated) : item))
+      conversationState.messagesByConversation.set(conversationId, nextMessages)
+      emitConversationEvent({
+        type: 'message.updated',
+        conversation_id: conversationId,
+        entity_id: draftId,
+        payload: { message: updated },
+      })
+      return updated
+    }
+    return null
   }
 
   function publishAssistantMessage(conversationId, message) {
@@ -252,8 +391,14 @@ function createHarnessController({
     subscribeConversation,
     requestDirectMessage,
     acceptDirectMessage,
+    closeConversation,
+    setGroupAcceptResponse,
+    createGroupInvitations,
+    acceptGroupInvitation,
+    rejectGroupInvitation,
     createAssistantDraft,
     appendAssistantToken,
+    updateAssistantDraft,
     publishAssistantMessage,
     getActiveConversationId: () => bootstrapModel.activeConversationId,
     resetHarness(nextFixture = fixtureName) {
@@ -314,9 +459,46 @@ function createHarnessFetch(controller, baseUrl = 'http://paramind-harness.inval
       return Response.json(controller.requestDirectMessage(body.target_peer_id || 'peer-b'))
     }
 
+    if (path === '/api/group/invitations' && method === 'POST') {
+      const body = init.body ? JSON.parse(init.body) : {}
+      return Response.json(controller.createGroupInvitations({
+        title: body.title || '',
+        targetPeerIds: body.target_peer_ids || [],
+        conversationId: body.conversation_id || null,
+      }))
+    }
+
+    const aiDraftMatch = path.match(/^\/api\/ai\/drafts\/([^/]+)$/)
+    if (aiDraftMatch && method === 'PATCH') {
+      const body = init.body ? JSON.parse(init.body) : {}
+      const updated = controller.updateAssistantDraft(decodeURIComponent(aiDraftMatch[1]), body.content || '')
+      if (!updated) {
+        return new Response(JSON.stringify({ detail: 'Draft not found' }), {
+          status: 404,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return Response.json(updated)
+    }
+
     const requestAcceptMatch = path.match(/^\/api\/dm\/requests\/([^/]+)\/accept$/)
     if (requestAcceptMatch && method === 'POST') {
       return Response.json(controller.acceptDirectMessage(decodeURIComponent(requestAcceptMatch[1])))
+    }
+
+    const groupAcceptMatch = path.match(/^\/api\/group\/invitations\/([^/]+)\/accept$/)
+    if (groupAcceptMatch && method === 'POST') {
+      return Response.json(controller.acceptGroupInvitation(decodeURIComponent(groupAcceptMatch[1])))
+    }
+
+    const groupRejectMatch = path.match(/^\/api\/group\/invitations\/([^/]+)\/reject$/)
+    if (groupRejectMatch && method === 'POST') {
+      return Response.json(controller.rejectGroupInvitation(decodeURIComponent(groupRejectMatch[1])))
+    }
+
+    const conversationCloseMatch = path.match(/^\/api\/conversations\/([^/]+)\/close$/)
+    if (conversationCloseMatch && method === 'POST') {
+      return Response.json(controller.closeConversation(decodeURIComponent(conversationCloseMatch[1])))
     }
 
     return new Response(JSON.stringify({ detail: `Harness route not implemented: ${method} ${path}` }), {
@@ -366,8 +548,14 @@ function installBrowserHarness() {
     getMessages: (conversationId) => controller.getMessages(conversationId),
     requestDirectMessage: (targetPeerId) => controller.requestDirectMessage(targetPeerId),
     acceptDirectMessage: (requestId) => controller.acceptDirectMessage(requestId),
+    closeDirectMessage: (conversationId) => controller.closeConversation(conversationId),
+    setGroupAcceptResponse: (invitationId, response) => controller.setGroupAcceptResponse(invitationId, response),
+    createGroupInvitations: (payload) => controller.createGroupInvitations(payload),
+    acceptGroupInvitation: (invitationId) => controller.acceptGroupInvitation(invitationId),
+    rejectGroupInvitation: (invitationId) => controller.rejectGroupInvitation(invitationId),
     createAssistantDraft: (conversationId) => controller.createAssistantDraft(conversationId),
     appendAssistantToken: (conversationId, messageId, token) => controller.appendAssistantToken(conversationId, messageId, token),
+    updateAssistantDraft: (draftId, content) => controller.updateAssistantDraft(draftId, content),
     publishAssistantMessage: (conversationId, message) => controller.publishAssistantMessage(conversationId, message),
   }
 

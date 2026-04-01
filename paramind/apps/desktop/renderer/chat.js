@@ -45,6 +45,7 @@ const state = {
   hasInitialBootstrap: false,
   renderedConversationListSignature: null,
   conversationNodeById: new Map(),
+  renderedConversationCardSignatureById: new Map(),
   renderedPeerListSignature: null,
   timelinePaneByConversationId: new Map(),
   timelineRegistryByConversationId: new Map(),
@@ -52,9 +53,16 @@ const state = {
   userScrolledUpByConversation: new Map(),
   renderedRouteSignature: null,
   renderedDiagnosticsSignature: null,
+  draftEditStateByMessageId: new Map(),
 }
 
 let chatState = CHAT_STATE?.createChatState ? CHAT_STATE.createChatState() : null
+const groupComposerState = {
+  mode: 'create',
+  conversationId: null,
+  title: '',
+  eligiblePeers: [],
+}
 
 const $ = (id) => runtimeDocument?.getElementById(id)
 
@@ -167,6 +175,51 @@ function getMessageById(conversationId, messageId) {
   return getConversationMessages(conversationId).find((item) => String(item.id) === String(messageId)) || null
 }
 
+function ensureLocalDraftMessage(conversationId, messageId) {
+  let draft = getMessageById(conversationId, messageId)
+  if (draft) return draft
+  const messageNode = runtimeDocument?.querySelector(`[data-message-id="${String(messageId)}"]`)
+  if (!messageNode) return null
+  draft = {
+    id: String(messageId),
+    conversation_id: conversationId,
+    sender_id: 'assistant',
+    sender_name: 'AI',
+    role: 'assistant',
+    status: 'streaming',
+    content: messageNode.querySelector(`[data-message-content="${String(messageId)}"]`)?.textContent || '',
+    metadata: { local_draft: true },
+    created_at: messageNode.dataset.messageCreatedAt || new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }
+  upsertMessage(draft)
+  return draft
+}
+
+function getDraftEditState(messageId) {
+  return state.draftEditStateByMessageId.get(String(messageId)) || null
+}
+
+function setDraftEditState(messageId, nextState) {
+  state.draftEditStateByMessageId.set(String(messageId), nextState)
+}
+
+function clearDraftEditState(messageId) {
+  state.draftEditStateByMessageId.delete(String(messageId))
+}
+
+function focusDraftEditor(messageId) {
+  runtimeWindow?.requestAnimationFrame?.(() => {
+    const editor = runtimeDocument?.querySelector(`textarea[data-message-editor="${String(messageId)}"]`)
+    if (!editor) return
+    editor.focus()
+    const length = editor.value.length
+    try {
+      editor.setSelectionRange(length, length)
+    } catch (_) {}
+  })
+}
+
 function getLatestMessage(conversationId, role) {
   const messages = getConversationMessages(conversationId)
   for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -242,6 +295,36 @@ function getConversationDisplayTitle(conversation) {
   if (conversation.kind !== 'dm') return conversation.title
   const counterpartId = getCounterpartPeerId(conversation)
   return getPeerDisplayName(counterpartId)
+}
+
+function getFallbackConversationId(excludingConversationId = null) {
+  return buildConversationCards().find((item) => item.id === 'general')?.id
+    || buildConversationCards().find((item) => !isLifecycleConversationId(item.id) && item.id !== excludingConversationId)?.id
+    || null
+}
+
+function getPendingGroupInviteTargets(conversationId) {
+  return new Set(
+    state.groupInvitations
+      .filter((invitation) => invitation.status === 'pending' && invitation.conversation_id === conversationId)
+      .map((invitation) => invitation.target_peer_id),
+  )
+}
+
+function getEligiblePeersForGroupComposer({ conversationId = null } = {}) {
+  const existingParticipants = new Set()
+  if (conversationId) {
+    const conversation = state.conversations.find((item) => item.id === conversationId)
+    for (const peerId of conversation?.participant_ids || []) existingParticipants.add(peerId)
+  }
+  existingParticipants.add(state.self?.id)
+  const pendingTargets = conversationId ? getPendingGroupInviteTargets(conversationId) : new Set()
+  return state.peers.filter((peer) => (
+    peer.id !== state.self?.id
+    && peer.status === 'online'
+    && !existingParticipants.has(peer.id)
+    && !pendingTargets.has(peer.id)
+  ))
 }
 
 function getPendingRequestTitle(request) {
@@ -405,6 +488,7 @@ function removeMessage(conversationId, messageId) {
   const next = current.filter((item) => item.id !== messageId)
   state.messagesByConversation.set(conversationId, next)
   chatState.messagesByConversation.set(conversationId, next.slice())
+  clearDraftEditState(messageId)
 }
 
 function syncUnreadFromBootstrap(conversations) {
@@ -460,6 +544,8 @@ function removeDmRequest(requestId) {
 }
 
 function removeConversation(conversationId) {
+  const messages = state.messagesByConversation.get(conversationId) || []
+  messages.forEach((message) => clearDraftEditState(message.id))
   state.conversations = state.conversations.filter((item) => item.id !== conversationId)
   state.messagesByConversation.delete(conversationId)
   state.unreadByConversation.delete(conversationId)
@@ -486,6 +572,32 @@ function upsertPeer(peer) {
   return changed
 }
 
+function syncDefaultGroupParticipantsFromPeers() {
+  const generalConversation = state.conversations.find((item) => item.id === 'general' && item.kind === 'group')
+  if (!generalConversation) return false
+
+  const nextParticipantIds = Array.from(new Set(
+    state.peers
+      .map((peer) => String(peer?.id || '').trim())
+      .filter(Boolean)
+      .filter((peerId) => !['assistant', 'ai'].includes(peerId.toLowerCase())),
+  )).sort()
+
+  const currentParticipantIds = Array.from(new Set(
+    (generalConversation.participant_ids || [])
+      .map((peerId) => String(peerId || '').trim())
+      .filter(Boolean)
+      .filter((peerId) => !['assistant', 'ai'].includes(peerId.toLowerCase())),
+  )).sort()
+
+  if (currentParticipantIds.join('|') === nextParticipantIds.join('|')) {
+    return false
+  }
+
+  generalConversation.participant_ids = nextParticipantIds
+  return true
+}
+
 function renderConversationCard(card) {
   return `
     <div class="conversation-row">
@@ -494,6 +606,19 @@ function renderConversationCard(card) {
     </div>
     <div class="subtitle">${escapeHtml(card.subtitle)}</div>
     <div class="conversation-kind">${escapeHtml(card.kind.replace('conversation.', ''))}</div>
+  `
+}
+
+function ensureConversationNodeStructure(node) {
+  if (node.querySelector('.conversation-row') && node.querySelector('.subtitle') && node.querySelector('.conversation-kind')) {
+    return
+  }
+  node.innerHTML = `
+    <div class="conversation-row">
+      <div class="title"></div>
+    </div>
+    <div class="subtitle"></div>
+    <div class="conversation-kind"></div>
   `
 }
 
@@ -509,7 +634,28 @@ function patchConversationNode(node, card) {
   node.className = `conversation${card.id === state.activeConversationId ? ' active' : ''}`
   node.dataset.conversationId = card.id
   node.dataset.renderSignature = renderSignature
-  node.innerHTML = renderConversationCard(card)
+  ensureConversationNodeStructure(node)
+
+  const titleNode = node.querySelector('.title')
+  const subtitleNode = node.querySelector('.subtitle')
+  const kindNode = node.querySelector('.conversation-kind')
+  const rowNode = node.querySelector('.conversation-row')
+  let badgeNode = rowNode?.querySelector('.conversation-badge') || null
+
+  if (titleNode) titleNode.textContent = card.title
+  if (subtitleNode) subtitleNode.textContent = card.subtitle
+  if (kindNode) kindNode.textContent = card.kind.replace('conversation.', '')
+
+  if (card.unread) {
+    if (!badgeNode && rowNode) {
+      badgeNode = document.createElement('span')
+      badgeNode.className = 'conversation-badge'
+      rowNode.appendChild(badgeNode)
+    }
+    if (badgeNode) badgeNode.textContent = String(card.unread)
+  } else if (badgeNode) {
+    badgeNode.remove()
+  }
 }
 
 function renderConversations() {
@@ -530,6 +676,7 @@ function renderConversations() {
 
   if (!cards.length) {
     state.conversationNodeById.clear()
+    state.renderedConversationCardSignatureById.clear()
     list.innerHTML = ''
     list.innerHTML = `<div class="empty">
       <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -548,19 +695,33 @@ function renderConversations() {
     if (!nextIds.has(conversationId)) {
       node.remove()
       state.conversationNodeById.delete(conversationId)
+      state.renderedConversationCardSignatureById.delete(conversationId)
     }
   }
 
-  for (const card of cards) {
+  cards.forEach((card, index) => {
     let item = state.conversationNodeById.get(card.id)
     if (!item) {
       item = document.createElement('button')
       item.addEventListener('click', () => selectConversation(card.id))
       state.conversationNodeById.set(card.id, item)
     }
-    patchConversationNode(item, card)
-    list.appendChild(item)
-  }
+    const currentSignature = JSON.stringify({
+      title: card.title,
+      subtitle: card.subtitle,
+      kind: card.kind,
+      unread: card.unread,
+      active: card.id === state.activeConversationId,
+    })
+    if (state.renderedConversationCardSignatureById.get(card.id) !== currentSignature) {
+      patchConversationNode(item, card)
+      state.renderedConversationCardSignatureById.set(card.id, currentSignature)
+    }
+    const desiredNode = list.children[index] || null
+    if (desiredNode !== item) {
+      list.insertBefore(item, desiredNode)
+    }
+  })
   state.renderedConversationListSignature = signature
 }
 
@@ -573,8 +734,36 @@ function patchConversationSelection() {
 function renderDraftCard(message, conversationId) {
   const time = CHAT_STATE.formatClockTime(message.created_at)
   const statusTone = CHAT_STATE.getStatusTone(message)
+  const editState = getDraftEditState(message.id)
+  const content = editState
+    ? `
+      <div class="message-card draft-card draft-card-editing">
+        <textarea
+          class="draft-editor"
+          data-message-editor="${escapeHtml(message.id)}"
+          data-message-id="${escapeHtml(message.id)}"
+          ${editState.saving ? 'disabled' : ''}
+        >${escapeHtml(editState.content || '')}</textarea>
+      </div>
+    `
+    : `<div class="message-card draft-card" data-message-content="${escapeHtml(message.id)}">${escapeHtml(message.content || '生成中…')}</div>`
+  const actions = editState
+    ? `
+      <div class="draft-actions">
+        <button type="button" class="draft-save-btn" data-message-id="${escapeHtml(message.id)}" ${editState.saving ? 'disabled' : ''}><svg class="ico ico-sm" style="display:inline;width:12px;height:12px"><use href="#ico-check"/></svg> 保存</button>
+        <button type="button" class="draft-cancel-btn" data-message-id="${escapeHtml(message.id)}" ${editState.saving ? 'disabled' : ''}><svg class="ico ico-sm" style="display:inline;width:12px;height:12px"><use href="#ico-x"/></svg> 取消</button>
+      </div>
+    `
+    : `
+      <div class="draft-actions">
+        <button type="button" class="draft-edit-btn" data-message-id="${escapeHtml(message.id)}"><svg class="ico ico-sm" style="display:inline;width:12px;height:12px"><use href="#ico-edit"/></svg> 编辑</button>
+        <button type="button" class="draft-copy-btn" data-message-id="${escapeHtml(message.id)}"><svg class="ico ico-sm" style="display:inline;width:12px;height:12px"><use href="#ico-copy"/></svg> 复制</button>
+        <button type="button" class="draft-send-btn" data-message-id="${escapeHtml(message.id)}" data-conversation-id="${escapeHtml(conversationId)}"><svg class="ico ico-sm" style="display:inline;width:12px;height:12px"><use href="#ico-send"/></svg> 发送</button>
+        <button type="button" class="draft-delete-btn" data-message-id="${escapeHtml(message.id)}" data-conversation-id="${escapeHtml(conversationId)}"><svg class="ico ico-sm" style="display:inline;width:12px;height:12px"><use href="#ico-trash"/></svg> 删除</button>
+      </div>
+    `
   return `
-    <div class="message ai-draft" data-message-id="${escapeHtml(message.id)}" data-card-kind="message.ai-draft">
+    <div class="message ai-draft${editState ? ' editing' : ''}" data-message-id="${escapeHtml(message.id)}" data-card-kind="message.ai-draft">
       <div class="avatar">AI</div>
       <div style="flex:1;min-width:0;">
         <div class="message-meta">
@@ -582,13 +771,8 @@ function renderDraftCard(message, conversationId) {
           <span class="status-pill status-${escapeHtml(statusTone)}" data-message-status="${escapeHtml(message.id)}">${escapeHtml(CHAT_STATE.getDisplayStatus(message))}</span>
           <span data-message-time="${escapeHtml(message.id)}">${escapeHtml(time)}</span>
         </div>
-        <div class="message-card draft-card" data-message-content="${escapeHtml(message.id)}">${escapeHtml(message.content || '生成中…')}</div>
-        <div class="draft-actions">
-          <button type="button" class="draft-edit-btn" data-message-id="${escapeHtml(message.id)}"><svg class="ico ico-sm" style="display:inline;width:12px;height:12px"><use href="#ico-edit"/></svg> 编辑</button>
-          <button type="button" class="draft-copy-btn" data-message-id="${escapeHtml(message.id)}"><svg class="ico ico-sm" style="display:inline;width:12px;height:12px"><use href="#ico-copy"/></svg> 复制</button>
-          <button type="button" class="draft-send-btn" data-message-id="${escapeHtml(message.id)}" data-conversation-id="${escapeHtml(conversationId)}"><svg class="ico ico-sm" style="display:inline;width:12px;height:12px"><use href="#ico-send"/></svg> 发送</button>
-          <button type="button" class="draft-delete-btn" data-message-id="${escapeHtml(message.id)}" data-conversation-id="${escapeHtml(conversationId)}"><svg class="ico ico-sm" style="display:inline;width:12px;height:12px"><use href="#ico-trash"/></svg> 删除</button>
-        </div>
+        ${content}
+        ${actions}
       </div>
     </div>
   `
@@ -662,6 +846,122 @@ function renderGroupInvitation(invitation) {
       </div>
     </div>
   `
+}
+
+function updateGroupComposerSubmitState() {
+  const selectedCount = runtimeDocument?.querySelectorAll('#groupComposerPeerList input[type="checkbox"]:checked').length || 0
+  const title = String($('groupComposerTitle')?.value || '').trim()
+  const requiresTitle = groupComposerState.mode === 'create'
+  $('groupComposerSubmitBtn').disabled = selectedCount === 0 || (requiresTitle && !title)
+}
+
+function renderGroupComposerPeerList() {
+  const list = $('groupComposerPeerList')
+  if (!list) return
+  if (!groupComposerState.eligiblePeers.length) {
+    list.innerHTML = '<div class="peer-picker-empty">当前没有可邀请的新成员。</div>'
+    updateGroupComposerSubmitState()
+    return
+  }
+  list.innerHTML = groupComposerState.eligiblePeers.map((peer) => `
+    <label class="peer-picker-item">
+      <input type="checkbox" value="${escapeHtml(peer.id)}" aria-label="${escapeHtml(peer.display_name)}" />
+      <div class="peer-picker-copy">
+        <div class="title">${escapeHtml(peer.display_name)}</div>
+        <div class="subtitle">${escapeHtml(peer.id)} · ${escapeHtml(peer.status)}</div>
+      </div>
+    </label>
+  `).join('')
+  list.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
+    checkbox.addEventListener('change', updateGroupComposerSubmitState)
+  })
+  updateGroupComposerSubmitState()
+}
+
+function closeGroupComposer() {
+  $('groupComposerModal').hidden = true
+  $('groupComposerTitle').value = ''
+  $('groupComposerPeerList').innerHTML = ''
+  $('groupComposerSubmitBtn').disabled = true
+  groupComposerState.mode = 'create'
+  groupComposerState.conversationId = null
+  groupComposerState.title = ''
+  groupComposerState.eligiblePeers = []
+}
+
+function openGroupComposer({ mode = 'create', conversationId = null } = {}) {
+  const conversation = conversationId
+    ? state.conversations.find((item) => item.id === conversationId) || null
+    : null
+  groupComposerState.mode = mode
+  groupComposerState.conversationId = conversationId
+  groupComposerState.title = conversation?.title || ''
+  groupComposerState.eligiblePeers = getEligiblePeersForGroupComposer({ conversationId })
+
+  $('groupComposerHeading').textContent = mode === 'invite' ? '邀请成员' : '新建群聊'
+  $('groupComposerSubheading').textContent = mode === 'invite'
+    ? '选择尚未加入该群聊的节点。'
+    : '输入群聊名称并选择至少一个成员。'
+  $('groupComposerTitle').value = mode === 'invite' ? (conversation?.title || '') : ''
+  $('groupComposerTitle').disabled = mode === 'invite'
+  $('groupComposerTitle').placeholder = mode === 'invite' ? '当前群聊名称' : '例如：Project Alpha'
+  $('groupComposerSubmitBtn').textContent = mode === 'invite' ? '发送邀请' : '创建群聊'
+  renderGroupComposerPeerList()
+  $('groupComposerModal').hidden = false
+  if (mode === 'create') $('groupComposerTitle').focus()
+}
+
+async function submitGroupComposer() {
+  const selectedPeerIds = Array.from(runtimeDocument?.querySelectorAll('#groupComposerPeerList input[type="checkbox"]:checked') || [])
+    .map((node) => node.value)
+    .filter(Boolean)
+  if (!selectedPeerIds.length) return
+
+  try {
+    if (groupComposerState.mode === 'invite' && groupComposerState.conversationId) {
+      const response = await callApi('/api/group/invitations', {
+        method: 'POST',
+        body: JSON.stringify({
+          conversation_id: groupComposerState.conversationId,
+          target_peer_ids: selectedPeerIds,
+        }),
+      })
+      if (response?.conversation) upsertConversation(response.conversation)
+      for (const invitation of response?.invitations || []) upsertGroupInvitation(invitation)
+      renderConversations()
+      renderMessages()
+      setComposerStatus('群邀请已发送')
+      closeGroupComposer()
+      return
+    }
+
+    const title = String($('groupComposerTitle').value || '').trim()
+    if (!title) return
+    const created = await callApi('/api/group/invitations', {
+      method: 'POST',
+      body: JSON.stringify({ title, target_peer_ids: selectedPeerIds }),
+    })
+    if (created?.conversation) {
+      upsertConversation(created.conversation)
+    }
+    for (const invitation of created?.invitations || []) {
+      upsertGroupInvitation(invitation)
+    }
+    closeGroupComposer()
+    renderConversations()
+    if (created?.conversation?.id) {
+      await selectConversation(created.conversation.id)
+    }
+  } catch (error) {
+    setComposerStatus(error.message)
+  }
+}
+
+function renderRoomActions() {
+  const conversation = getActiveConversation()
+  const isInvitableGroup = conversation?.kind === 'group' && conversation?.id !== 'general'
+  $('inviteGroupBtn').hidden = !isInvitableGroup
+  $('leaveGroupBtn').hidden = !isInvitableGroup
 }
 
 function renderBaseMessageCard(message, cssRole, content, actions = '') {
@@ -744,6 +1044,11 @@ function createTimelineRegistry() {
   }
 }
 
+function syncMessageNodeOrderKey(node, message) {
+  if (!node) return
+  node.dataset.messageCreatedAt = String(message?.created_at || message?.updated_at || '')
+}
+
 function indexMessageNode(registry, node) {
   if (!node) return
   const messageId = node.dataset.messageId
@@ -803,6 +1108,7 @@ function buildTimelinePane(conversationId) {
   // If registry already has nodes (cached), skip rebuild - nodes are already in DOM
   if (registry.messageNodeById.size > 0) {
     pane.querySelectorAll('.empty').forEach((n) => n.remove())
+    reorderTimelineNodes(conversationId)
     return pane
   }
 
@@ -822,10 +1128,40 @@ function buildTimelinePane(conversationId) {
   }
   for (const message of messages) {
     const node = createNodeFromHTML(renderTimelineCard(message, conversation.id))
+    syncMessageNodeOrderKey(node, message)
     pane.appendChild(node)
     indexMessageNode(registry, node)
   }
   return pane
+}
+
+function reorderTimelineNodes(conversationId) {
+  const pane = state.timelinePaneByConversationId.get(conversationId)
+  const registry = state.timelineRegistryByConversationId.get(conversationId)
+  if (!pane || !registry) return
+  const orderedNodes = Array.from(registry.messageNodeById.values())
+    .filter((node) => node?.parentElement === pane)
+    .sort((a, b) => {
+      const aTime = String(a.dataset.messageCreatedAt || '')
+      const bTime = String(b.dataset.messageCreatedAt || '')
+      return aTime.localeCompare(bTime) || String(a.dataset.messageId || '').localeCompare(String(b.dataset.messageId || ''))
+    })
+  orderedNodes.forEach((node, index) => {
+    const desiredNode = pane.children[index] || null
+    if (desiredNode !== node) {
+      pane.insertBefore(node, desiredNode)
+    }
+  })
+}
+
+function replaceTimelineNodePreservingPosition(conversationId, registry, existingNode, replacement) {
+  const pane = state.timelinePaneByConversationId.get(conversationId)
+  if (!pane) return
+  if (existingNode?.parentElement === pane) {
+    existingNode.replaceWith(replacement)
+    return
+  }
+  pane.appendChild(replacement)
 }
 
 function showTimelinePane(conversationId) {
@@ -848,6 +1184,7 @@ function patchMessageNode(conversationId, message) {
   const messageId = String(message.id)
   const existingNode = registry.messageNodeById.get(messageId)
   const replacement = createNodeFromHTML(renderTimelineCard(message, conversationId))
+  syncMessageNodeOrderKey(replacement, message)
   if (!existingNode) {
     pane.querySelectorAll('.empty').forEach((node) => node.remove())
     const messages = getConversationMessages(conversationId)
@@ -859,19 +1196,32 @@ function patchMessageNode(conversationId, message) {
       pane.appendChild(replacement)
     }
     indexMessageNode(registry, replacement)
+    reorderTimelineNodes(conversationId)
     return
   }
   const existingKind = existingNode.dataset.cardKind || ''
   const nextKind = replacement.dataset.cardKind || ''
   if (existingKind !== nextKind) {
-    existingNode.replaceWith(replacement)
+    replaceTimelineNodePreservingPosition(conversationId, registry, existingNode, replacement)
     dropMessageNodeFromRegistry(registry, messageId)
     indexMessageNode(registry, replacement)
+    reorderTimelineNodes(conversationId)
+    return
+  }
+
+  const existingEditor = existingNode.querySelector('[data-message-editor]')
+  const replacementEditor = replacement.querySelector('[data-message-editor]')
+  if (existingEditor || replacementEditor) {
+    replaceTimelineNodePreservingPosition(conversationId, registry, existingNode, replacement)
+    dropMessageNodeFromRegistry(registry, messageId)
+    indexMessageNode(registry, replacement)
+    reorderTimelineNodes(conversationId)
     return
   }
 
   existingNode.className = replacement.className
   existingNode.dataset.cardKind = nextKind
+  syncMessageNodeOrderKey(existingNode, message)
 
   const contentNode = registry.messageContentNodeById.get(messageId)
   if (contentNode) {
@@ -904,6 +1254,8 @@ function patchMessageNode(conversationId, message) {
     existingActionNode.remove()
     registry.messageActionNodeById.delete(messageId)
   }
+
+  reorderTimelineNodes(conversationId)
 }
 
 function removeMessageNode(conversationId, messageId) {
@@ -913,6 +1265,7 @@ function removeMessageNode(conversationId, messageId) {
   const node = registry.messageNodeById.get(String(messageId))
   if (node) node.remove()
   dropMessageNodeFromRegistry(registry, messageId)
+  reorderTimelineNodes(conversationId)
   if (pane && !pane.querySelector('[data-message-id]')) {
     pane.replaceChildren(renderEmptyTimelinePane('这个会话还没有消息。<br>发送第一条消息开始。'))
   }
@@ -948,13 +1301,13 @@ function appendTokenToDraft(conversationId, messageId, token) {
     const statusTone = CHAT_STATE.getStatusTone(message)
 
     const shellHTML = `
-      <div class="message ai-draft" data-message-id="${escapeHtml(message.id)}">
+      <div class="message ai-draft" data-message-id="${escapeHtml(message.id)}" data-card-kind="message.ai-draft">
         <div class="avatar">AI</div>
         <div style="flex:1;min-width:0;">
           <div class="message-meta">
             <strong>AI 草稿</strong>
             <span class="status-pill status-${statusTone}" data-message-status="${escapeHtml(message.id)}">${escapeHtml(CHAT_STATE.getDisplayStatus(message))}</span>
-            <span>${escapeHtml(time)}</span>
+            <span data-message-time="${escapeHtml(message.id)}">${escapeHtml(time)}</span>
           </div>
           <div class="message-card draft-card" data-message-content="${escapeHtml(message.id)}"></div>
           <div class="draft-actions">
@@ -1056,19 +1409,47 @@ function bindMessageActions() {
     }
     if (button.classList.contains('draft-edit-btn')) {
       const conversationId = state.activeConversationId
+      const draft = ensureLocalDraftMessage(conversationId, button.dataset.messageId)
+      if (!draft) return
+      setDraftEditState(draft.id, { content: draft.content || '', saving: false })
+      patchMessageNode(conversationId, draft)
+      focusDraftEditor(draft.id)
+      return
+    }
+    if (button.classList.contains('draft-save-btn')) {
+      const conversationId = state.activeConversationId
       const draft = getMessageById(conversationId, button.dataset.messageId)
-      const nextContent = window.prompt('编辑 AI 草稿:', draft?.content || '')
-      if (nextContent === null || !draft || nextContent === draft.content) return
+      const editState = getDraftEditState(button.dataset.messageId)
+      if (!draft || !editState) return
+      if (editState.content === draft.content) {
+        clearDraftEditState(draft.id)
+        patchMessageNode(conversationId, draft)
+        return
+      }
+      setDraftEditState(draft.id, { ...editState, saving: true })
+      patchMessageNode(conversationId, draft)
       try {
         const updated = await callApi(`/api/ai/drafts/${draft.id}`, {
           method: 'PATCH',
-          body: JSON.stringify({ content: nextContent }),
+          body: JSON.stringify({ content: editState.content }),
         })
+        clearDraftEditState(draft.id)
         upsertMessage(updated)
         patchMessageNode(updated.conversation_id, updated)
+        setComposerStatus('AI 草稿已更新')
       } catch (error) {
+        setDraftEditState(draft.id, { ...editState, saving: false })
+        patchMessageNode(conversationId, draft)
         setComposerStatus(error.message)
       }
+      return
+    }
+    if (button.classList.contains('draft-cancel-btn')) {
+      const conversationId = state.activeConversationId
+      const draft = getMessageById(conversationId, button.dataset.messageId)
+      if (!draft) return
+      clearDraftEditState(draft.id)
+      patchMessageNode(conversationId, draft)
       return
     }
     if (button.classList.contains('draft-send-btn')) {
@@ -1104,6 +1485,14 @@ function bindMessageActions() {
     const isAtBottom = list.scrollHeight - list.scrollTop - list.clientHeight < SCROLL_THRESHOLD_PX
     state.userScrolledUpByConversation.set(conversationId, !isAtBottom)
   })
+
+  $('messageList').addEventListener('input', (event) => {
+    const editor = event.target.closest('.draft-editor')
+    if (!editor) return
+    const editState = getDraftEditState(editor.dataset.messageId)
+    if (!editState) return
+    setDraftEditState(editor.dataset.messageId, { ...editState, content: editor.value })
+  })
 }
 
 async function acknowledgeVisiblePeerMessages(conversationId) {
@@ -1122,11 +1511,13 @@ async function acknowledgeVisiblePeerMessages(conversationId) {
 function renderMessages() {
   const conversation = getActiveConversation()
   const isLifecycleConversation = conversation?.kind === 'dm-pending' || conversation?.kind === 'group-pending'
+  const participantCount = CHAT_STATE.getConversationParticipantCount(conversation)
 
   $('roomTitle').textContent = conversation?.title || 'No conversation selected'
   $('roomMeta').textContent = conversation
-    ? (isLifecycleConversation ? 'pending request' : `${conversation.kind} · ${conversation.participant_ids?.length || 1} participants`)
+    ? (isLifecycleConversation ? 'pending request' : `${conversation.kind} · ${participantCount || 1} participants`)
     : 'Choose or create a conversation'
+  renderRoomActions()
 
   if (!conversation) {
     $('messageList').replaceChildren(renderEmptyTimelinePane('选择一个会话开始聊天。'))
@@ -1226,10 +1617,27 @@ function renderPeers() {
         await selectConversation(button.dataset.conversationId)
       } else if (action === 'leave-dm') {
         const leavingConversationId = button.dataset.conversationId
+        const leavingConversation = state.conversations.find((item) => item.id === leavingConversationId) || null
+        const counterpartId = leavingConversation
+          ? (leavingConversation.participant_ids || []).find((item) => item !== state.self?.id) || null
+          : null
         await callApi(`/api/conversations/${leavingConversationId}/close`, { method: 'POST' })
         const fallbackConversationId = buildConversationCards().find((item) => item.id === 'general')?.id
           || buildConversationCards().find((item) => !isLifecycleConversationId(item.id) && item.id !== leavingConversationId)?.id
           || null
+        if (counterpartId) {
+          upsertRelationship({
+            peer_id: counterpartId,
+            relationship: 'closed_dm',
+            status: 'closed_dm',
+            request_id: null,
+            conversation_id: null,
+            updated_at: new Date().toISOString(),
+          })
+        }
+        if (state.activeConversationId === leavingConversationId) {
+          state.activeConversationId = fallbackConversationId
+        }
         removeConversation(leavingConversationId)
         renderConversations()
         renderPeers()
@@ -1337,6 +1745,10 @@ function applyRenderScope(scope) {
     case 'conversations':
       renderConversations()
       return
+    case 'shell-list':
+      renderConversations()
+      renderConversationShell()
+      return
     case 'peers':
       renderPeers()
       return
@@ -1400,7 +1812,7 @@ async function refreshBootstrap({ preserveSelection = true } = {}) {
   setComposerStatus('Ready')
   if (hasMeaningfulChange && state.activeConversationId && !isLifecycleConversationId(state.activeConversationId)) {
     await loadMessages(state.activeConversationId)
-    await openConversationStream(state.activeConversationId)
+    void openConversationStream(state.activeConversationId)
   }
   state.hasInitialBootstrap = true
 }
@@ -1442,36 +1854,37 @@ async function selectConversationWithOptions(conversationId, { force = false } =
     showTimelinePane(conversationId)
     await acknowledgeVisiblePeerMessages(conversationId)
   }
-  await openConversationStream(conversationId)
+  void openConversationStream(conversationId)
+}
+
+function injectConversationSnapshot(conversation, messages = [], latestConversationEventId = null) {
+  if (!conversation?.id) return
+  upsertConversation(conversation)
+  const sortedMessages = [...messages].sort((a, b) => {
+    const aTime = String(a?.created_at || a?.updated_at || '')
+    const bTime = String(b?.created_at || b?.updated_at || '')
+    return aTime.localeCompare(bTime) || String(a?.id || '').localeCompare(String(b?.id || ''))
+  })
+  state.messagesByConversation.set(conversation.id, [])
+  chatState.messagesByConversation.set(conversation.id, [])
+  for (const message of sortedMessages) {
+    upsertMessage(message)
+  }
+  if (latestConversationEventId !== null && latestConversationEventId !== undefined) {
+    const nextId = Number(latestConversationEventId || 0)
+    state.latestConversationEventIds.set(
+      conversation.id,
+      Math.max(Number(state.latestConversationEventIds.get(conversation.id) || 0), nextId),
+    )
+    state.lastEventIdByConversation.set(
+      conversation.id,
+      Math.max(Number(state.lastEventIdByConversation.get(conversation.id) || 0), nextId),
+    )
+  }
 }
 
 async function createGroupConversation() {
-  const title = window.prompt('输入群聊名称')
-  if (!title) return
-  const rawPeerIds = window.prompt('输入邀请成员 peer id（逗号分隔，可留空创建本地群）', '') || ''
-  const targetPeerIds = rawPeerIds
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean)
-  if (targetPeerIds.length) {
-    const created = await callApi('/api/group/invitations', {
-      method: 'POST',
-      body: JSON.stringify({ title, target_peer_ids: targetPeerIds }),
-    })
-    upsertConversation(created.conversation)
-    for (const invitation of created.invitations || []) {
-      upsertGroupInvitation(invitation)
-    }
-    renderConversations()
-    await selectConversation(created.conversation.id)
-    return
-  }
-  const conversation = await callApi('/api/conversations', {
-    method: 'POST',
-    body: JSON.stringify({ title, kind: 'group' }),
-  })
-  upsertConversation(conversation)
-  await selectConversation(conversation.id)
+  openGroupComposer({ mode: 'create' })
 }
 
 async function requestDirectMessage(peerId) {
@@ -1536,10 +1949,10 @@ async function autoEnterAcceptedDm(request, conversation) {
   await selectConversationWithOptions(conversation.id, { force: true })
 }
 
-async function autoEnterAcceptedGroupInvitation(invitation, conversation) {
+async function autoEnterAcceptedGroupInvitation(invitation, conversation, payload = {}) {
   if (!invitation || !conversation) return
   if (invitation.target_peer_id !== state.self?.id) return
-  upsertConversation(conversation)
+  injectConversationSnapshot(conversation, payload.messages || [], payload.latestConversationEventId ?? payload.latest_conversation_event_id ?? null)
   removeGroupInvitation(invitation.id)
   renderConversations()
   await selectConversationWithOptions(conversation.id, { force: true })
@@ -1574,8 +1987,14 @@ async function acceptGroupInvitation(invitationId) {
   try {
     const response = await callApi(`/api/group/invitations/${invitationId}/accept`, { method: 'POST' })
     removeGroupInvitation(invitationId)
-    if (response?.conversation_id) {
-      await refreshBootstrap({ preserveSelection: true })
+    if (response?.conversation) {
+      injectConversationSnapshot(
+        response.conversation,
+        response.messages || [],
+        response.latest_conversation_event_id ?? null,
+      )
+      renderConversations()
+      await selectConversationWithOptions(response.conversation.id, { force: true })
     }
   } catch (error) {
     setComposerStatus(error.message)
@@ -1593,6 +2012,22 @@ async function rejectGroupInvitation(invitationId) {
     }
   } catch (error) {
     setComposerStatus(error.message)
+  }
+}
+
+async function leaveGroupConversation(conversationId) {
+  const conversation = state.conversations.find((item) => item.id === conversationId) || null
+  if (!conversation || conversation.kind !== 'group' || conversation.id === 'general') return
+  const fallbackConversationId = getFallbackConversationId(conversationId)
+  await callApi(`/api/conversations/${conversationId}/close`, { method: 'POST' })
+  if (state.activeConversationId === conversationId) {
+    state.activeConversationId = fallbackConversationId
+  }
+  removeConversation(conversationId)
+  renderConversations()
+  renderMessages()
+  if (fallbackConversationId) {
+    await selectConversationWithOptions(fallbackConversationId, { force: true })
   }
 }
 
@@ -1672,6 +2107,7 @@ async function retryLatestMessage(conversationId = state.activeConversationId) {
 async function sendDraftAsUser(messageId) {
   try {
     const sent = await callApi(`/api/ai/drafts/${messageId}/send`, { method: 'POST' })
+    clearDraftEditState(messageId)
     upsertMessage(sent)
     removeMessage(sent.conversation_id, messageId)
     setComposerStatus('AI 消息已发送')
@@ -1687,6 +2123,7 @@ async function sendDraftAsUser(messageId) {
 async function deleteDraft(messageId, conversationId) {
   try {
     await callApi(`/api/ai/drafts/${messageId}`, { method: 'DELETE' })
+    clearDraftEditState(messageId)
     removeMessage(conversationId, messageId)
     setComposerStatus('AI 草稿已删除')
     removeMessageNode(conversationId, messageId)
@@ -1718,6 +2155,7 @@ function handleDmRequestEvent(event) {
     upsertRelationship({
       peer_id: counterpartId,
       relationship: 'active_dm',
+      status: 'active_dm',
       request_id: null,
       conversation_id: event.payload?.conversation?.id || request.conversation_id || null,
       updated_at: request.updated_at,
@@ -1727,12 +2165,31 @@ function handleDmRequestEvent(event) {
     upsertRelationship({
       peer_id: counterpartId,
       relationship: 'none',
+      status: 'none',
       request_id: null,
       conversation_id: null,
       updated_at: request.updated_at,
     })
+
+    const requestConversationId = getRequestConversationId(request.id)
+    const wasViewingRequest = state.activeConversationId === requestConversationId
+    if (wasViewingRequest) {
+      const fallbackConversationId = buildConversationCards().find((item) => !isLifecycleConversationId(item.id) && item.id !== requestConversationId)?.id || null
+      const resolution = CHAT_STATE.resolvePostDmRequestSelection({
+        action: 'reject',
+        wasViewingRequest,
+        resolvedConversationId: null,
+        fallbackConversationId,
+      })
+      if (resolution.nextConversationId) {
+        void selectConversationWithOptions(resolution.nextConversationId, { force: resolution.force })
+      } else if (resolution.force) {
+        applyRenderScope('conversation')
+      }
+    }
   }
   removeDmRequest(request.id)
+  renderPeers()
 }
 
 function handleGroupInvitationEvent(event) {
@@ -1740,15 +2197,23 @@ function handleGroupInvitationEvent(event) {
   if (!invitation) return
   if (event.type === 'group.invited' && invitation.status === 'pending') {
     upsertGroupInvitation(invitation)
+    renderConversations()
     return
   }
   if (event.type === 'group.accepted' && event.payload?.conversation) {
-    void autoEnterAcceptedGroupInvitation(invitation, event.payload.conversation)
+    upsertConversation(event.payload.conversation)
+    void autoEnterAcceptedGroupInvitation(invitation, event.payload.conversation, {
+      messages: event.payload.messages || [],
+      latestConversationEventId: event.payload.latest_conversation_event_id ?? null,
+    })
   }
   removeGroupInvitation(invitation.id)
+  renderConversations()
 }
 
 function handleEvent(event) {
+  const activeConversationBeforeEvent = getActiveConversation()
+
   if (event.conversation_id) {
     state.lastEventIdByConversation.set(
       event.conversation_id,
@@ -1780,7 +2245,19 @@ function handleEvent(event) {
   switch (event.type) {
     case 'conversation.created':
     case 'conversation.updated':
-      if (event.payload?.conversation) upsertConversation(event.payload.conversation)
+      if (event.payload?.conversation) {
+        const previousConversation = state.conversations.find((item) => item.id === event.payload.conversation.id) || null
+        upsertConversation(event.payload.conversation)
+        if (
+          CHAT_STATE.shouldRefreshActiveShellForEvent(
+            event,
+            state.activeConversationId,
+            previousConversation || activeConversationBeforeEvent,
+          )
+        ) {
+          renderScope = 'shell-list'
+        }
+      }
       break
     case 'conversation.deleted': {
       const conversationId = event.payload?.conversation_id || event.conversation_id || event.entity_id
@@ -1845,15 +2322,35 @@ function handleEvent(event) {
       break
     case 'peer.joined':
     case 'peer.updated':
-    case 'peer.left':
-      if (event.payload?.peer) {
-        renderScope = upsertPeer(event.payload.peer) ? 'peers' : 'none'
+    case 'peer.left': {
+      let peerChanged = false
+      if (event.type === 'peer.left') {
+        const peerId = event.payload?.peer?.id || event.entity_id
+        const beforeLength = state.peers.length
+        state.peers = state.peers.filter((peer) => peer.id !== peerId)
+        peerChanged = state.peers.length !== beforeLength
+      } else if (event.payload?.peer) {
+        peerChanged = upsertPeer(event.payload.peer)
+      }
+      const generalParticipantsChanged = syncDefaultGroupParticipantsFromPeers()
+      if (generalParticipantsChanged && state.activeConversationId === 'general') {
+        renderScope = 'shell-list'
+      } else if (peerChanged) {
+        renderScope = 'peers'
       } else {
         renderScope = 'none'
       }
       break
+    }
     default:
       break
+  }
+
+  if (
+    renderScope === 'conversations'
+    && CHAT_STATE.shouldRefreshActiveShellForEvent(event, state.activeConversationId, activeConversationBeforeEvent)
+  ) {
+    renderScope = 'shell-list'
   }
 
   applyRenderScope(renderScope)
@@ -2048,9 +2545,27 @@ async function init() {
   $('retryBtn').addEventListener('click', () => retryLatestMessage())
   $('newGroupBtn').addEventListener('click', createGroupConversation)
   $('refreshBtn').addEventListener('click', () => refreshBootstrap({ preserveSelection: true }))
+  $('inviteGroupBtn').addEventListener('click', () => {
+    const conversation = getActiveConversation()
+    if (conversation?.kind === 'group' && conversation.id !== 'general') {
+      openGroupComposer({ mode: 'invite', conversationId: conversation.id })
+    }
+  })
+  $('leaveGroupBtn').addEventListener('click', () => {
+    const conversation = getActiveConversation()
+    if (conversation?.kind === 'group' && conversation.id !== 'general') {
+      void leaveGroupConversation(conversation.id)
+    }
+  })
+  $('groupComposerCancelBtn').addEventListener('click', closeGroupComposer)
+  $('groupComposerSubmitBtn').addEventListener('click', () => { void submitGroupComposer() })
+  $('groupComposerTitle').addEventListener('input', updateGroupComposerSubmitState)
+  $('groupComposerModal').addEventListener('click', (event) => {
+    if (event.target === $('groupComposerModal')) closeGroupComposer()
+  })
 
   await waitForBootstrap()
-  await openGlobalStream()
+  void openGlobalStream()
 
   state.bootstrapRefreshTimer = null
 }

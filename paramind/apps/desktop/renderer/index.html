@@ -201,7 +201,6 @@
         margin-bottom: 5px;
         text-align: left;
         transition: all .15s ease;
-        animation: slide-up .3s ease both;
         min-height: 78px;
       }
       .conversation:hover {
@@ -287,6 +286,16 @@
         font-size: 11px;
         min-width: 200px;
       }
+      .room-header-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+      .room-header-actions button[hidden] {
+        display: none !important;
+      }
       .route-badge .route-dot {
         width: 7px;
         height: 7px;
@@ -332,12 +341,7 @@
         align-items: flex-start;
         max-width: 780px;
         margin-bottom: 22px;
-        animation: slide-up .28s ease both;
       }
-      .message:nth-child(1) { animation-delay: 0ms; }
-      .message:nth-child(2) { animation-delay: 40ms; }
-      .message:nth-child(3) { animation-delay: 80ms; }
-      .message:nth-child(n+4) { animation-delay: 0ms; }
       .message.user {
         flex-direction: row-reverse;
         margin-left: auto;
@@ -551,6 +555,26 @@
         border-top: 1px solid rgba(123,97,255,.2);
         background: rgba(123,97,255,.04);
       }
+      .message.ai-draft.editing .message-card.draft-card {
+        padding: 10px;
+      }
+      .draft-editor {
+        width: 100%;
+        min-height: 96px;
+        resize: vertical;
+        border: 1px solid rgba(123,97,255,.35);
+        border-radius: 8px;
+        background: rgba(10,10,16,.92);
+        color: var(--text);
+        font: inherit;
+        line-height: 1.55;
+        padding: 10px 12px;
+        outline: none;
+      }
+      .draft-editor:focus {
+        border-color: rgba(123,97,255,.65);
+        box-shadow: 0 0 0 1px rgba(123,97,255,.35);
+      }
       .draft-actions {
         display: flex;
         gap: 6px;
@@ -587,6 +611,101 @@
       }
       .peer-actions .pending {
         opacity: .6;
+      }
+      .modal-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,.72);
+        backdrop-filter: blur(14px);
+        display: grid;
+        place-items: center;
+        z-index: 50;
+        padding: 24px;
+      }
+      .modal-backdrop[hidden] {
+        display: none !important;
+      }
+      .modal-card {
+        width: min(560px, 100%);
+        border-radius: 18px;
+        border: 1px solid var(--line-strong);
+        background: linear-gradient(180deg, rgba(255,255,255,.03) 0%, rgba(255,255,255,.01) 100%), var(--panel);
+        box-shadow: var(--shadow);
+        overflow: hidden;
+      }
+      .modal-header {
+        padding: 20px 22px 14px;
+        border-bottom: 1px solid var(--line);
+      }
+      .modal-body {
+        padding: 18px 22px;
+        display: grid;
+        gap: 14px;
+      }
+      .modal-footer {
+        padding: 14px 22px 22px;
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+      }
+      .modal-field {
+        display: grid;
+        gap: 8px;
+      }
+      .modal-field label {
+        font-size: 12px;
+        color: var(--muted);
+        font-family: var(--font-mono);
+        letter-spacing: .04em;
+        text-transform: uppercase;
+      }
+      .modal-field input[type="text"] {
+        width: 100%;
+        border-radius: 10px;
+        border: 1px solid var(--line-strong);
+        background: var(--panel-2);
+        color: var(--text);
+        padding: 11px 12px;
+        font-size: 14px;
+        outline: none;
+      }
+      .modal-field input[type="text"]:focus {
+        border-color: var(--accent-glow);
+        box-shadow: 0 0 0 3px rgba(0,212,170,.08);
+      }
+      .peer-picker-list {
+        display: grid;
+        gap: 10px;
+        max-height: 280px;
+        overflow-y: auto;
+      }
+      .peer-picker-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 12px 14px;
+        border-radius: 12px;
+        border: 1px solid var(--line);
+        background: rgba(255,255,255,.02);
+      }
+      .peer-picker-item input[type="checkbox"] {
+        margin-top: 3px;
+      }
+      .peer-picker-copy {
+        display: grid;
+        gap: 4px;
+        min-width: 0;
+      }
+      .peer-picker-copy .title {
+        font-size: 14px;
+      }
+      .peer-picker-empty {
+        border: 1px dashed var(--line-strong);
+        border-radius: 12px;
+        padding: 18px 14px;
+        color: var(--muted);
+        text-align: center;
+        font-size: 13px;
       }
       .online-dot {
         display: inline-block;
@@ -746,9 +865,13 @@
             <div class="title" id="roomTitle">Loading…</div>
             <div class="subtitle" id="roomMeta">Connecting to local backend</div>
           </div>
-          <div class="route-badge" id="routeBadge">
-            <span class="route-dot"></span>
-            <span id="routeText">No route yet</span>
+          <div class="room-header-actions">
+            <button type="button" id="inviteGroupBtn" hidden><span class="btn-icon"><svg class="ico"><use href="#ico-users"/></svg>邀请成员</span></button>
+            <button type="button" class="danger" id="leaveGroupBtn" hidden><span class="btn-icon"><svg class="ico"><use href="#ico-x"/></svg>退出群聊</span></button>
+            <div class="route-badge" id="routeBadge">
+              <span class="route-dot"></span>
+              <span id="routeText">No route yet</span>
+            </div>
           </div>
         </div>
         <div class="messages" id="messageList"></div>
@@ -777,6 +900,28 @@
         <div class="section-title">Diagnostics</div>
         <div class="list" id="diagList"></div>
       </aside>
+    </div>
+    <div class="modal-backdrop" id="groupComposerModal" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="groupComposerHeading">
+        <div class="modal-header">
+          <div class="title" id="groupComposerHeading">新建群聊</div>
+          <div class="subtitle" id="groupComposerSubheading">选择成员并创建群聊。</div>
+        </div>
+        <div class="modal-body">
+          <div class="modal-field">
+            <label for="groupComposerTitle">群聊名称</label>
+            <input type="text" id="groupComposerTitle" placeholder="例如：Project Alpha" />
+          </div>
+          <div class="modal-field">
+            <label>选择成员</label>
+            <div class="peer-picker-list" id="groupComposerPeerList"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" id="groupComposerCancelBtn">取消</button>
+          <button type="button" class="primary" id="groupComposerSubmitBtn" disabled>创建群聊</button>
+        </div>
+      </div>
     </div>
     <script src="./chat_state.js"></script>
     <script src="./harness_fixtures.js"></script>

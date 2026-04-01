@@ -85,6 +85,10 @@ function renderMarkdown(content) {
   return DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } })
 }
 
+function setTypingIndicator(node) {
+  node.innerHTML = '<span class="typing-indicator"><span></span><span></span><span></span></span>'
+}
+
 async function callApi(path, options = {}) {
   const response = await fetch(`${state.apiBase}${path}`, {
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
@@ -1264,8 +1268,12 @@ function patchMessageNode(conversationId, message) {
   const contentNode = registry.messageContentNodeById.get(messageId)
   if (contentNode) {
     if (message.metadata?.local_draft === true && message.status === 'streaming') {
-      contentNode.textContent = message.content || ''
-      contentNode.dataset.streamingStarted = '1'
+      if (!message.content && !contentNode.dataset.streamingStarted) {
+        setTypingIndicator(contentNode)
+      } else {
+        contentNode.dataset.streamingStarted = '1'
+        contentNode.textContent = message.content || ''
+      }
     } else if (!contentNode.dataset.streamingStarted) {
       contentNode.textContent = message.content || ''
     }
@@ -1368,8 +1376,11 @@ function appendTokenToDraft(conversationId, messageId, token) {
     return
   }
 
+  if (!contentNode.dataset.streamingStarted) {
+    contentNode.dataset.streamingStarted = '1'
+    contentNode.textContent = ''
+  }
   contentNode.textContent = message.content || `${contentNode.textContent || ''}${token}`
-  contentNode.dataset.streamingStarted = '1'
   patchMessageStatus(conversationId, messageId, { ...message, status: 'streaming' })
 
   // Scroll guard: only auto-scroll if user is at bottom

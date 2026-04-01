@@ -775,3 +775,63 @@ test('scroll indicator appears when user is scrolled up and a new message arrive
   await expect(page.locator('#scrollIndicator')).toBeVisible({ timeout: 2000 })
   await expect(page.locator('#scrollIndicatorCount')).toContainText('1')
 })
+
+test('shows typing indicator for streaming message with no content', async ({ page }) => {
+  await page.goto(`${baseUrl}/dev_harness.html?fixture=bootstrap_two_peers`)
+
+  const draftId = await page.evaluate(() => {
+    const draft = window.ParaMindHarness.createAssistantDraft('general')
+    return draft.id
+  })
+
+  // Emit a streaming update with empty content — typing indicator should appear
+  await page.evaluate((id) => {
+    window.ParaMindHarness.emitConversationEvent({
+      type: 'message.updated',
+      conversation_id: 'general',
+      entity_id: id,
+      payload: {
+        message: {
+          id,
+          conversation_id: 'general',
+          sender_id: 'assistant',
+          sender_name: 'AI',
+          role: 'assistant',
+          status: 'streaming',
+          content: '',
+          metadata: { local_draft: true },
+          created_at: '2026-04-01T10:00:00Z',
+          updated_at: '2026-04-01T10:00:01Z',
+        },
+      },
+    })
+  }, draftId)
+
+  await expect(page.locator(`[data-message-content="${draftId}"] .typing-indicator`)).toBeVisible()
+
+  // Emit a streaming update with actual content — typing indicator should disappear
+  await page.evaluate((id) => {
+    window.ParaMindHarness.emitConversationEvent({
+      type: 'message.updated',
+      conversation_id: 'general',
+      entity_id: id,
+      payload: {
+        message: {
+          id,
+          conversation_id: 'general',
+          sender_id: 'assistant',
+          sender_name: 'AI',
+          role: 'assistant',
+          status: 'streaming',
+          content: '你好',
+          metadata: { local_draft: true },
+          created_at: '2026-04-01T10:00:00Z',
+          updated_at: '2026-04-01T10:00:02Z',
+        },
+      },
+    })
+  }, draftId)
+
+  await expect(page.locator(`[data-message-content="${draftId}"] .typing-indicator`)).not.toBeVisible()
+  await expect(page.locator(`[data-message-content="${draftId}"]`)).toContainText('你好')
+})

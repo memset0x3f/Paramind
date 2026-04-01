@@ -7,6 +7,7 @@ BPE can revise earlier boundaries and break UTF-8 when slicing by string length.
 
 This file still tests the old diff helper for regression on tokenizer behavior.
 """
+
 import pytest
 from transformers import AutoTokenizer
 
@@ -26,7 +27,7 @@ def accumulate_diff_stream(tokenizer, token_ids_stream):
             clean_up_tokenization_spaces=False,
         )
         if new_text != decoded_so_far:
-            yield new_text[len(decoded_so_far):], new_text
+            yield new_text[len(decoded_so_far) :], new_text
             decoded_so_far = new_text
     # flush
     if generated_ids:
@@ -36,7 +37,7 @@ def accumulate_diff_stream(tokenizer, token_ids_stream):
             clean_up_tokenization_spaces=False,
         )
         if final != decoded_so_far:
-            yield final[len(decoded_so_far):], final
+            yield final[len(decoded_so_far) :], final
 
 
 def test_chinese_character_streaming():
@@ -52,7 +53,9 @@ def test_chinese_character_streaming():
         {"role": "system", "content": "You are a helpful assistant."},
         {"role": "user", "content": "用一句话介绍广义相对论"},
     ]
-    text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    text = tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
     input_ids = tokenizer(text, return_tensors="pt").input_ids
 
     # Simulate tokens that form Chinese text
@@ -71,7 +74,9 @@ def test_chinese_character_streaming():
         full_chunks.append(full)
 
     assembled = "".join(chunks)
-    assert assembled == sample_response, f"Expected {sample_response!r}, got {assembled!r}"
+    assert (
+        assembled == sample_response
+    ), f"Expected {sample_response!r}, got {assembled!r}"
     print(f"Chunks: {chunks}")
     print(f"Full at each step: {full_chunks}")
 
@@ -91,7 +96,9 @@ def test_accumulate_diff_matches_final_decode():
         chunks.append(diff)
 
     assembled = "".join(chunks)
-    final = tokenizer.decode(response_tokens, skip_special_tokens=True, clean_up_tokenization_spaces=False)
+    final = tokenizer.decode(
+        response_tokens, skip_special_tokens=True, clean_up_tokenization_spaces=False
+    )
     assert assembled == final, f"assembled={assembled!r}, final={final!r}"
 
 
@@ -110,7 +117,9 @@ def test_mixed_language_streaming():
         chunks.append(diff)
 
     assembled = "".join(chunks)
-    final = tokenizer.decode(response_tokens, skip_special_tokens=True, clean_up_tokenization_spaces=False)
+    final = tokenizer.decode(
+        response_tokens, skip_special_tokens=True, clean_up_tokenization_spaces=False
+    )
     assert assembled == final, f"assembled={assembled!r}, final={final!r}"
 
 

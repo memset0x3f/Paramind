@@ -5,15 +5,27 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 COORDINATOR_PORT="${PARAMIND_COORDINATOR_PORT:-9010}"
+BACKEND_PORT_A="${PARAMIND_BACKEND_PORT_A:-5001}"
+BACKEND_PORT_B="${PARAMIND_BACKEND_PORT_B:-5002}"
 BASE_DATA_DIR="${PARAMIND_APP_DATA_DIR:-$ROOT_DIR/.paramind-local}"
 mkdir -p "$BASE_DATA_DIR"
+
+# Kill any residual processes on our ports before starting
+echo "清理残留进程..."
+for PORT in "$COORDINATOR_PORT" "$BACKEND_PORT_A" "$BACKEND_PORT_B"; do
+    PID=$(lsof -ti:$PORT 2>/dev/null)
+    if [ -n "$PID" ]; then
+        echo "  释放端口 $PORT (PID $PID)..."
+        kill -9 $PID 2>/dev/null
+    fi
+done
 
 # Each Electron instance now starts its own FastAPI backend automatically.
 echo "启动第一个 Electron 实例..."
 PARAMIND_COORDINATOR_PORT="$COORDINATOR_PORT" \
 PARAMIND_INSTANCE_ID="peer-a" \
 PARAMIND_INSTANCE_NAME="Peer A" \
-PARAMIND_BACKEND_PORT="5001" \
+PARAMIND_BACKEND_PORT="$BACKEND_PORT_A" \
 PARAMIND_INSTANCE_DATA_DIR="$BASE_DATA_DIR/peer-a" \
 npm start &
 ELECTRON1_PID=$!
@@ -26,7 +38,7 @@ echo "启动第二个 Electron 实例..."
 PARAMIND_COORDINATOR_PORT="$COORDINATOR_PORT" \
 PARAMIND_INSTANCE_ID="peer-b" \
 PARAMIND_INSTANCE_NAME="Peer B" \
-PARAMIND_BACKEND_PORT="5002" \
+PARAMIND_BACKEND_PORT="$BACKEND_PORT_B" \
 PARAMIND_INSTANCE_DATA_DIR="$BASE_DATA_DIR/peer-b" \
 npm start &
 ELECTRON2_PID=$!

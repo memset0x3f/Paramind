@@ -11,17 +11,32 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
-project_root = Path(__file__).resolve().parents[4]
-if str(project_root) not in sys.path:
-    sys.path.insert(0, str(project_root))
-
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from paramind.apps.desktop.python.app.config import build_settings
-from paramind.apps.desktop.python.app.database import create_sqlite_engine, init_db
-from paramind.apps.desktop.python.app.services import DesktopAppService
+
+def _bootstrap_pythonpath():
+    python_root = Path(__file__).resolve().parent
+    candidates = [python_root]
+    for entry in os.environ.get("PYTHONPATH", "").split(os.pathsep):
+        if entry:
+            candidates.append(Path(entry))
+    for candidate in candidates:
+        candidate_str = str(candidate)
+        if candidate_str and candidate_str not in sys.path:
+            sys.path.insert(0, candidate_str)
+
+
+if __package__ in {None, ""}:
+    _bootstrap_pythonpath()
+    from app.config import build_settings
+    from app.database import create_sqlite_engine, init_db
+    from app.services import DesktopAppService
+else:
+    from .app.config import build_settings
+    from .app.database import create_sqlite_engine, init_db
+    from .app.services import DesktopAppService
 
 
 def _sse(event: dict) -> str:
@@ -387,9 +402,9 @@ if __name__ == "__main__":
     import uvicorn
 
     settings = build_settings()
+    app = create_app()
     uvicorn.run(
-        "paramind.apps.desktop.python.backend:create_app",
-        factory=True,
+        app,
         host="127.0.0.1",
         port=settings.backend_port,
         reload=False,

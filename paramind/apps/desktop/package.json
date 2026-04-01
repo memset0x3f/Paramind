@@ -6,6 +6,7 @@
   "scripts": {
     "start": "electron .",
     "build": "electron-builder",
+    "build:python": "bash scripts/build-python.sh",
     "build:win": "electron-builder --win",
     "build:mac": "electron-builder --mac",
     "build:linux": "electron-builder --linux",
@@ -39,6 +40,7 @@
       "!**/{appveyor.yml,.travis.yml,circle.yml}",
       "!**/{npm-debug.log,yarn.lock,.yarn-integrity,.yarn-metadata.json}",
       "!venv/**/*",
+      "!.venv/**/*",
       "!*.py",
       "!requirements.txt",
       "!network_config.py",
@@ -47,23 +49,25 @@
     ],
     "extraResources": [
       {
-        "from": "venv",
-        "to": "python-venv",
+        "from": "python-dist",
+        "to": "python-dist",
         "filter": [
           "**/*"
         ]
       },
       {
-        "from": "python/backend.py",
-        "to": "python/backend.py"
+        "from": "python",
+        "to": "python",
+        "filter": [
+          "**/*"
+        ]
       },
       {
-        "from": "requirements.txt",
-        "to": "requirements.txt"
-      },
-      {
-        "from": "python/network_config.py",
-        "to": "python/network_config.py"
+        "from": "../../../inference",
+        "to": "inference",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {

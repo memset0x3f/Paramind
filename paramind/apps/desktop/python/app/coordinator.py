@@ -211,9 +211,9 @@ def main():
     import uvicorn
     import os
 
+    app = create_coordinator_app()
     uvicorn.run(
-        "paramind.apps.desktop.python.app.coordinator:create_coordinator_app",
-        factory=True,
+        app,
         host="127.0.0.1",
         port=int(os.environ.get("PARAMIND_COORDINATOR_PORT", "9010")),
     )

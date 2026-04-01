@@ -1,9 +1,9 @@
 const { app, BrowserWindow, ipcMain } = require('electron/main')
 const { spawn } = require('child_process')
 const crypto = require('crypto')
-const fs = require('fs')
 const net = require('net')
 const path = require('path')
+const { resolveDesktopRuntimePaths } = require('./runtime_paths')
 
 let pythonProcess = null
 let coordinatorProcess = null
@@ -30,11 +30,14 @@ function findAvailablePort(startPort = 5001, endPort = 5100) {
 }
 
 async function startBackend() {
-  const pythonScript = path.join(__dirname, 'python', 'backend.py')
-  const venvPython = path.join(__dirname, '.venv', 'bin', 'python3')
-  const pythonCmd =
-    process.env.PARAMIND_PYTHON_BIN ||
-    (fs.existsSync(venvPython) ? venvPython : 'python3')
+  const runtimePaths = resolveDesktopRuntimePaths({
+    isPackaged: app.isPackaged,
+    appDir: __dirname,
+    resourcesPath: process.resourcesPath,
+    env: process.env,
+    platform: process.platform,
+  })
+  const pythonScript = runtimePaths.pythonScript
 
   const port = parseInt(process.env.PARAMIND_BACKEND_PORT || '', 10) || await findAvailablePort()
   const instanceId = process.env.PARAMIND_INSTANCE_ID || `peer-${crypto.randomUUID().slice(0, 8)}`
@@ -45,7 +48,7 @@ async function startBackend() {
     path.join(baseAppDataDir, 'instances', instanceId)
   const coordinatorPort = process.env.PARAMIND_COORDINATOR_PORT || '9010'
 
-  await ensureCoordinator(pythonCmd, Number(coordinatorPort))
+  await ensureCoordinator(runtimePaths, Number(coordinatorPort))
 
   backendConfig = {
     port,
@@ -57,10 +60,11 @@ async function startBackend() {
     coordinatorPort: Number(coordinatorPort),
   }
 
-  pythonProcess = spawn(pythonCmd, [pythonScript], {
-    cwd: __dirname,
+  pythonProcess = spawn(runtimePaths.pythonCommand, [...runtimePaths.pythonArgs, pythonScript], {
+    cwd: runtimePaths.baseDir,
     env: {
       ...process.env,
+      PYTHONPATH: [...runtimePaths.moduleRoots, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
       PARAMIND_BACKEND_PORT: String(port),
       PARAMIND_INSTANCE_ID: instanceId,
       PARAMIND_INSTANCE_NAME: instanceName,
@@ -90,18 +94,18 @@ function canConnect(port) {
   })
 }
 
-async function ensureCoordinator(pythonCmd, coordinatorPort) {
+async function ensureCoordinator(runtimePaths, coordinatorPort) {
   const alreadyRunning = await canConnect(coordinatorPort)
   if (alreadyRunning) return
 
-  const repoRoot = path.resolve(__dirname, '..', '..', '..')
   coordinatorProcess = spawn(
-    pythonCmd,
-    ['-m', 'paramind.apps.desktop.python.app.coordinator'],
+    runtimePaths.pythonCommand,
+    [...runtimePaths.pythonArgs, runtimePaths.coordinatorScript],
     {
-      cwd: repoRoot,
+      cwd: runtimePaths.baseDir,
       env: {
         ...process.env,
+        PYTHONPATH: [...runtimePaths.moduleRoots, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
         PARAMIND_COORDINATOR_PORT: String(coordinatorPort),
       },
       stdio: ['ignore', 'pipe', 'pipe'],

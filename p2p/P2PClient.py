@@ -15,7 +15,11 @@ from common import RuntimeException, PeerInfo
 from common import createUdpSocket, findFreePort, getLocalIP
 from common import FunctionRegistry
 from common.Constants import UDP_CHUNK_SIZE
-from common.Utils import sendTorchData, deserializeTorchData
+from common.Utils import (
+    sendTorchData,
+    deserializeTorchData,
+    TORCH_PACKET_MAGIC,
+)
 from inference import QwenSlice
 
 logger = logging.getLogger(__name__)
@@ -94,15 +98,38 @@ class P2PClient:
     def recvPeerMessage(self):
         while True:
             data, addr = self.peerSocket.recvfrom(UDP_CHUNK_SIZE)
-            try:
-                data = data.decode()
-                jsonData = json.loads(data)
-                # Track the source address for endpoint selection
-                jsonData["_source_addr"] = addr
-                logger.info(f"Received UDP message from {addr}: {jsonData['type']}")
-            except json.JSONDecodeError:
-                logger.warning(f"Received non-JSON UDP message from {addr}: {data}")
-                continue
+            jsonData = None
+            if data.startswith(TORCH_PACKET_MAGIC):
+                if len(data) < 8:
+                    logger.warning(f"Received malformed torch packet from {addr}")
+                    continue
+                header_len = int.from_bytes(data[4:8], byteorder="big")
+                header_end = 8 + header_len
+                if len(data) < header_end:
+                    logger.warning(f"Received incomplete torch header from {addr}")
+                    continue
+                try:
+                    header = json.loads(data[8:header_end].decode("utf-8"))
+                except json.JSONDecodeError:
+                    logger.warning(f"Received invalid torch header from {addr}")
+                    continue
+                jsonData = {
+                    "type": header["type"],
+                    "uuid": header["uuid"],
+                    "chunkId": header["chunkId"],
+                    "nChunk": header["nChunk"],
+                    "obj": data[header_end:],
+                }
+            else:
+                try:
+                    jsonData = json.loads(data.decode())
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    logger.warning(f"Received non-JSON UDP message from {addr}: {data}")
+                    continue
+
+            # Track the source address for endpoint selection
+            jsonData["_source_addr"] = addr
+            logger.info(f"Received UDP message from {addr}: {jsonData['type']}")
             if self._peerHandlers.get(jsonData["type"]):
                 self._peerHandlers[jsonData["type"]](self, jsonData)
 
@@ -389,15 +416,17 @@ class P2PClient:
     def _recvTorchData(self, data):
         nChunk = data["nChunk"]
         uuid = str(data["uuid"])
+        streamType = data["type"]
+        bufferKey = f"{uuid}:{streamType}"
         chunkId = data["chunkId"]
-        if uuid not in self.torchDataBuffer:
-            self.torchDataBuffer[uuid] = [None] * nChunk
-        self.torchDataBuffer[uuid][chunkId] = data["obj"]
-        if all(chunk is not None for chunk in self.torchDataBuffer[uuid]):
+        if bufferKey not in self.torchDataBuffer:
+            self.torchDataBuffer[bufferKey] = [None] * nChunk
+        self.torchDataBuffer[bufferKey][chunkId] = data["obj"]
+        if all(chunk is not None for chunk in self.torchDataBuffer[bufferKey]):
             # All chunks received, reconstruct the full data
-            fullB64Str = "".join(self.torchDataBuffer[uuid])
-            tensorData = deserializeTorchData(fullB64Str)
-            del self.torchDataBuffer[uuid]  # Clear buffer
+            fullBytes = b"".join(self.torchDataBuffer[bufferKey])
+            tensorData = deserializeTorchData(fullBytes)
+            del self.torchDataBuffer[bufferKey]  # Clear buffer
             return tensorData
         return None
 

@@ -3,10 +3,12 @@ import struct
 import io
 import torch
 import json
-import base64
 import time
 
 from common.Constants import UDP_CHUNK_SIZE
+
+
+TORCH_PACKET_MAGIC = b"PMB1"
 
 
 def getLocalIP():
@@ -60,30 +62,30 @@ def sendTorchData(sock, data, uuid, targetAddr, input=True):
     buffer = io.BytesIO()
     torch.save(data, buffer)
     serialized_data = buffer.getvalue()
-    b64Str = base64.b64encode(serialized_data).decode()
-    chunkSize = UDP_CHUNK_SIZE // 2
-    for i in range(0, len(b64Str), chunkSize):
-        if i + chunkSize > len(b64Str):
-            chunk = b64Str[i:]
-        else:
-            chunk = b64Str[i : i + chunkSize]
+    packet_type = "torchInput" if input else "torchOutput"
+    chunkSize = UDP_CHUNK_SIZE - 256
+    nChunk = (len(serialized_data) - 1) // chunkSize + 1
 
-        jsonData = json.dumps(
-            {
-                "type": "torchInput" if input else "torchOutput",
-                "uuid": str(uuid),
-                "chunkId": i // chunkSize,
-                "nChunk": (len(b64Str) - 1) // chunkSize + 1,
-                "obj": chunk,
-            }
-        ).encode()
-
-        sock.sendto(jsonData, targetAddr)
+    for i in range(0, len(serialized_data), chunkSize):
+        chunk = serialized_data[i : i + chunkSize]
+        header = {
+            "type": packet_type,
+            "uuid": str(uuid),
+            "chunkId": i // chunkSize,
+            "nChunk": nChunk,
+        }
+        header_bytes = json.dumps(header).encode("utf-8")
+        packet = (
+            TORCH_PACKET_MAGIC
+            + struct.pack("!I", len(header_bytes))
+            + header_bytes
+            + chunk
+        )
+        sock.sendto(packet, targetAddr)
         time.sleep(0.01)
 
 
-def deserializeTorchData(objStr: str):
-    serialized_data = base64.b64decode(objStr.encode())
+def deserializeTorchData(serialized_data: bytes):
     buffer = io.BytesIO(serialized_data)
     return torch.load(buffer)
 

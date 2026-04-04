@@ -1,4 +1,4 @@
-PYTHON ?= python3.11
+PYTHON ?= python
 
 .PHONY: help install test-inference test-scheduler test-p2p test-backend local-demo
 

@@ -30,6 +30,7 @@ def findFreePort():
 
 def createUdpSocket(port: int = 0):
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(("", port))
     return s
 

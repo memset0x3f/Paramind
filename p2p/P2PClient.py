@@ -88,10 +88,10 @@ class P2PClient:
     def recvPeerMessage(self):
         while True:
             data, addr = self.peerSocket.recvfrom(UDP_CHUNK_SIZE)
-            data = data.decode()
             try:
+                data = data.decode()
                 jsonData = json.loads(data)
-                logger.info(f"Received UDP message from {addr}: {jsonData["type"]}")
+                logger.info(f"Received UDP message from {addr}: {jsonData['type']}")
             except json.JSONDecodeError:
                 logger.warning(f"Received non-JSON UDP message from {addr}: {data}")
                 continue

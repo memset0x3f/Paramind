@@ -17,7 +17,7 @@ class QwenSlice(nn.Module):
         # 1. 加载完整模型到内存 (0.5B 很小，这就没问题了)
         full_model = AutoModelForCausalLM.from_pretrained(
             model_path,
-            torch_dtype=torch.float16,
+            dtype=torch.float16,
             device_map="cpu",
             trust_remote_code=True,
         )

@@ -37,6 +37,7 @@ class Site:
 class PeerInfo(Site):
     """
     Represents information of a peer in the P2P network.
+    Stores both public and internal addresses for multi-path connectivity.
     """
 
     def __init__(
@@ -45,10 +46,44 @@ class PeerInfo(Site):
         port: Optional[int] = None,
         uuid: Optional[UUID] = None,
         isConnected: bool = False,
+        internal_ip: Optional[str] = None,
+        internal_port: Optional[int] = None,
     ):
+        # Use public address as default (for backward compatibility)
         super().__init__(ip, port)
         self.uuid = uuid
         self.isConnected = isConnected
 
+        self.public_ip = ip
+        self.public_port = port
+        self.internal_ip = internal_ip
+        self.internal_port = internal_port
+        self.active_endpoint = None  # 'public', 'internal', or None
+
     def isValid(self) -> bool:
-        return super().isValid() and self.uuid is not None
+        return self.uuid is not None and (
+            self.public_ip is not None
+            and self.public_port is not None
+            or self.internal_ip is not None
+            and self.internal_port is not None
+        )
+
+    def get_active_address(self) -> tuple[str | None, int | None]:
+        """
+        Returns the currently active endpoint address (ip, port).
+        Falls back to public address if active_endpoint not set.
+        """
+        if (
+            self.active_endpoint == "internal"
+            and self.internal_ip
+            and self.internal_port
+        ):
+            return (self.internal_ip, self.internal_port)
+        elif self.active_endpoint == "public" and self.public_ip and self.public_port:
+            return (self.public_ip, self.public_port)
+        elif self.public_ip and self.public_port:
+            return (self.public_ip, self.public_port)
+        elif self.internal_ip and self.internal_port:
+            return (self.internal_ip, self.internal_port)
+        else:
+            return (self.ip, self.port)  # Fallback to parent Site

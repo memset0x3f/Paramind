@@ -12,7 +12,7 @@ from modelscope import snapshot_download
 from transformers import AutoTokenizer
 
 from common import RuntimeException, PeerInfo
-from common import createUdpSocket, findFreePort
+from common import createUdpSocket, findFreePort, getLocalIP
 from common import FunctionRegistry
 from common.Constants import UDP_CHUNK_SIZE
 from common.Utils import sendTorchData, deserializeTorchData
@@ -40,7 +40,13 @@ class P2PClient:
         _, externalIP, externalPort = self._queryStunInfo(self.udpPort)
         self.peerSocket = createUdpSocket(self.udpPort)
         assert self.peerSocket.getsockname()[1] == self.udpPort
-        self.info = PeerInfo(externalIP, externalPort, uuid.uuid4())
+
+        # Get real local IP instead of 0.0.0.0
+        internalIP = getLocalIP()
+        internalPort = self.peerSocket.getsockname()[1]
+        self.info = PeerInfo(
+            externalIP, externalPort, uuid.uuid4(), False, internalIP, internalPort
+        )
 
         self.recvThread = threading.Thread(target=self.recvPeerMessage, daemon=True)
         self.recvThread.start()
@@ -91,6 +97,8 @@ class P2PClient:
             try:
                 data = data.decode()
                 jsonData = json.loads(data)
+                # Track the source address for endpoint selection
+                jsonData["_source_addr"] = addr
                 logger.info(f"Received UDP message from {addr}: {jsonData['type']}")
             except json.JSONDecodeError:
                 logger.warning(f"Received non-JSON UDP message from {addr}: {data}")
@@ -112,6 +120,8 @@ class P2PClient:
             "groupId": groupId,
             "publicIp": self.info.ip,
             "publicPort": self.info.port,
+            "internalIp": self.info.internal_ip,
+            "internalPort": self.info.internal_port,
         }
         self.signalServerWs.send(json.dumps(registerMessage))
 
@@ -154,17 +164,16 @@ class P2PClient:
                 hidden_states, self.kvCache = self.model.forward(
                     input, past_key_values=self.kvCache
                 )
+                peer = list(self.peerInfo.values())[0]
+                active_addr = peer.get_active_address()
                 print(
-                    f"Step {step}, Hidden States Shape: {hidden_states.shape}. Sending to peer {list(self.peerInfo.values())[0].ip}:{list(self.peerInfo.values())[0].port}..."
+                    f"Step {step}, Hidden States Shape: {hidden_states.shape}. Sending to peer {active_addr[0]}:{active_addr[1]}..."
                 )
                 sendTorchData(
                     self.peerSocket,
                     hidden_states.cpu(),
                     self.info.uuid,
-                    (
-                        list(self.peerInfo.values())[0].ip,
-                        list(self.peerInfo.values())[0].port,
-                    ),
+                    active_addr,
                     input=True,
                 )
 
@@ -186,43 +195,57 @@ class P2PClient:
 
     def _sendHolePunchMsg(self, targetPeer: PeerInfo):
         logger.info(
-            f"Sending hole punch message to peer {targetPeer.uuid} at {targetPeer.ip}:{targetPeer.port}"
+            f"Sending hole punch message to peer {targetPeer.uuid} at public {targetPeer.public_ip}:{targetPeer.public_port} and internal {targetPeer.internal_ip}:{targetPeer.internal_port}"
         )
+        punchMsg = json.dumps(
+            {
+                "type": "punch",
+                "uuid": str(self.info.uuid),
+            }
+        ).encode()
+
         while self.peerInfo[str(targetPeer.uuid)].isConnected is False:
-            # Send UDP packet to target peer's public address
-            punchMsg = json.dumps(
-                {
-                    "type": "punch",
-                    "uuid": str(self.info.uuid),
-                }
-            )
-            self.peerSocket.sendto(
-                punchMsg.encode(),
-                (targetPeer.ip, targetPeer.port),
-            )
+            # Send UDP packet to both public and internal addresses
+            if targetPeer.public_ip and targetPeer.public_port:
+                self.peerSocket.sendto(
+                    punchMsg,
+                    (targetPeer.public_ip, targetPeer.public_port),
+                )
+            if targetPeer.internal_ip and targetPeer.internal_port:
+                self.peerSocket.sendto(
+                    punchMsg,
+                    (targetPeer.internal_ip, targetPeer.internal_port),
+                )
             time.sleep(0.5)  # Wait before sending the next packet
 
     @_signalServerHandlers.register("allPeers")
     def _handleAllPeers(self, data):
         peers = data["peers"]
-        self.peerInfo = {
-            peer["uuid"]: PeerInfo(
-                peer["public_address"]["ip"],
-                peer["public_address"]["port"],
-                uuid.UUID(peer["uuid"]),
+        self.peerInfo = {}
+        for peer in peers:
+            pub_addr = peer.get("public_address", {})
+            int_addr = peer.get("internal_address", {})
+            self.peerInfo[peer["uuid"]] = PeerInfo(
+                ip=pub_addr.get("ip"),
+                port=pub_addr.get("port"),
+                uuid=uuid.UUID(peer["uuid"]),
+                internal_ip=int_addr.get("ip"),
+                internal_port=int_addr.get("port"),
             )
-            for peer in peers
-        }
 
         logger.info(f"Peers in group: {peers}")
 
     @_signalServerHandlers.register("newPeer")
     def _handleNewPeer(self, data):
         newPeer = data["peer"]
+        pub_addr = newPeer.get("public_address", {})
+        int_addr = newPeer.get("internal_address", {})
         self.peerInfo[newPeer["uuid"]] = PeerInfo(
-            newPeer["public_address"]["ip"],
-            newPeer["public_address"]["port"],
-            uuid.UUID(newPeer["uuid"]),
+            ip=pub_addr.get("ip"),
+            port=pub_addr.get("port"),
+            uuid=uuid.UUID(newPeer["uuid"]),
+            internal_ip=int_addr.get("ip"),
+            internal_port=int_addr.get("port"),
         )
         logger.info(f"New peer joined: {newPeer}")
         self.holePunch(self.peerInfo[newPeer["uuid"]])
@@ -238,30 +261,70 @@ class P2PClient:
     @_peerHandlers.register("punch")
     def _handlePeerPunch(self, data):
         peerUuid = data["uuid"]
+        source_addr = data.get("_source_addr")
         if peerUuid not in self.peerInfo:
             logger.warning(f"Received punch from unknown peer {peerUuid}")
             return
+
+        # Detect which endpoint this punch came from (public or internal)
+        peer = self.peerInfo[peerUuid]
+        if source_addr:
+            if source_addr == (peer.public_ip, peer.public_port):
+                logger.debug(
+                    f"Punch from peer {peerUuid} came from public endpoint {source_addr}"
+                )
+            elif source_addr == (peer.internal_ip, peer.internal_port):
+                logger.debug(
+                    f"Punch from peer {peerUuid} came from internal endpoint {source_addr}"
+                )
+
         successMsg = json.dumps(
             {
                 "type": "punchSuccess",
                 "uuid": str(self.info.uuid),
             }
-        )
-        self.peerSocket.sendto(
-            successMsg.encode(),
-            (self.peerInfo[peerUuid].ip, self.peerInfo[peerUuid].port),
-        )
+        ).encode()
+
+        # Send punchSuccess back to the address where punch came from
+        if source_addr:
+            self.peerSocket.sendto(successMsg, source_addr)
+            logger.info(f"Sent punchSuccess to {source_addr}")
+        else:
+            # Fallback: try both endpoints
+            if peer.public_ip and peer.public_port:
+                self.peerSocket.sendto(successMsg, (peer.public_ip, peer.public_port))
+            if peer.internal_ip and peer.internal_port:
+                self.peerSocket.sendto(
+                    successMsg, (peer.internal_ip, peer.internal_port)
+                )
 
     @_peerHandlers.register("punchSuccess")
     def _handlePeerPunchSuccess(self, data):
         peerUuid = data["uuid"]
+        source_addr = data.get("_source_addr")
         if peerUuid not in self.peerInfo:
             logger.warning(f"Received punch success from unknown peer {peerUuid}")
             return
-        self.peerInfo[peerUuid].isConnected = True
+
+        peer = self.peerInfo[peerUuid]
+
+        # Auto-select active endpoint based on where punchSuccess came from
+        if source_addr:
+            if source_addr == (peer.public_ip, peer.public_port):
+                peer.active_endpoint = "public"
+                logger.info(
+                    f"Selected public endpoint for peer {peerUuid}: {source_addr}"
+                )
+            elif source_addr == (peer.internal_ip, peer.internal_port):
+                peer.active_endpoint = "internal"
+                logger.info(
+                    f"Selected internal endpoint for peer {peerUuid}: {source_addr}"
+                )
+
+        peer.isConnected = True
         logger.info(f"Established connection with peer {peerUuid}")
         print(
-            f"Established P2P connection with peer {self.peerInfo[peerUuid].ip}:{self.peerInfo[peerUuid].port}"
+            f"Established P2P connection with peer {peer.uuid} via {peer.get_active_address()}"
         )
 
     @_peerHandlers.register("torchInput")
@@ -285,11 +348,13 @@ class P2PClient:
                 0
             )  # [1, 1]
 
+        peer = self.peerInfo[peerUuid]
+        active_addr = peer.get_active_address()
         sendTorchData(
             self.peerSocket,
             next_token_id.cpu(),
             self.info.uuid,
-            (self.peerInfo[peerUuid].ip, self.peerInfo[peerUuid].port),
+            active_addr,
             input=False,
         )
 

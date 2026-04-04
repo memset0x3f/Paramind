@@ -9,6 +9,27 @@ import time
 from common.Constants import UDP_CHUNK_SIZE
 
 
+def getLocalIP():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 53))
+        local_ip = s.getsockname()[0]
+        s.close()
+        if local_ip and local_ip != "0.0.0.0":
+            return local_ip
+    except Exception:
+        pass
+
+    # 备选方案：用 localhost
+    try:
+        return socket.gethostbyname("localhost")
+    except Exception:
+        pass
+
+    # 如果都失败，返回 localhost
+    return "127.0.0.1"
+
+
 def isPortValid(port):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:

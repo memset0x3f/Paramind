@@ -9,13 +9,14 @@ function resolveDesktopRuntimePaths({
   platform = process.platform,
   existsSync = fs.existsSync,
 } = {}) {
+  const pathApi = platform === 'win32' ? path.win32 : path
   const baseDir = isPackaged ? resourcesPath : appDir
-  const workspaceRoot = path.resolve(appDir, '..', '..', '..')
-  const pythonRoot = path.join(baseDir, 'python')
-  const pythonScript = path.join(pythonRoot, 'backend.py')
-  const coordinatorScript = path.join(pythonRoot, 'app', 'coordinator.py')
+  const workspaceRoot = pathApi.resolve(appDir, '..', '..', '..')
+  const pythonRoot = pathApi.join(baseDir, 'python')
+  const pythonScript = pathApi.join(pythonRoot, 'backend.py')
+  const coordinatorScript = pathApi.join(pythonRoot, 'app', 'coordinator.py')
   const pythonBinaryName = platform === 'win32' ? 'python.exe' : 'python3'
-  const portablePython = path.join(baseDir, 'python-dist', 'bin', pythonBinaryName)
+  const portablePython = pathApi.join(baseDir, 'python-dist', 'bin', pythonBinaryName)
   const fallbackPython = platform === 'win32' ? 'python' : 'python3'
   let pythonCommand = ''
   let pythonArgs = []

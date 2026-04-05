@@ -2,6 +2,30 @@
 
 This directory contains the Electron shell, renderer, and FastAPI backend for the ParaMind desktop demo.
 
+## Quick start
+
+Install both the Python and Node parts before running tests or launching Electron:
+
+```bash
+cd /Users/acropolis/Github_Project/Paramind/paramind/apps/desktop
+uv sync
+npm ci
+```
+
+Use `uv` as the development source of truth for Python dependencies. `requirements.txt` is kept for the portable packaged Python runtime built by `npm run build:python`.
+
+To launch two local Electron peers from a shell script:
+
+- macOS / Linux: `bash scripts/start_chat.sh`
+- Windows (experimental): `npm run start:chat:win`
+
+## Run modes
+
+- **Development mode**: Electron starts the desktop backend through `uv run --project ... python`, so it does not rely on a local `.venv` path.
+- **Packaged mode**: Electron starts `python-dist/bin/python3` plus the bundled `python/` source tree from `process.resourcesPath`.
+
+Both modes use `PYTHONPATH=<...>/python` and desktop-local imports such as `from app...`, so they no longer depend on the repo root or `paramind.apps.desktop.python...`.
+
 ## Frontend testing workflow
 
 Use the browser harness by default when you are working on renderer behavior.
@@ -77,3 +101,12 @@ npm run build:python
 - `python/app/coordinator.py`
 
 开发态和打包态都通过 `PYTHONPATH=<...>/python` 加载 desktop 本地 Python 包，不再依赖 `paramind.apps.desktop.python...` 的源码树包路径。
+
+## Packaging status
+
+- `npm run build:python` currently provides default `python-build-standalone` assets for:
+  - macOS Apple Silicon
+  - macOS Intel
+  - Linux x86_64
+- Windows packaging metadata still exists in `package.json`, but the portable Python bootstrap script does not yet provide a default Windows asset. Treat Windows packaging as incomplete until that runtime path is added and smoke-tested.
+- The Windows multi-instance launcher is currently **experimental**. It is intended as a starting point for Windows contributors, and local shell / npm / networking differences may require manual edits.

@@ -1,8 +1,8 @@
-# Electron-Python 聊天应用打包和分发指南
+# ParaMind desktop 打包和分发指南
 
 ## 概述
 
-本指南将帮助您将Electron-Python聊天应用打包成可分发的安装程序，并实现设备间的网络通信。
+本指南将帮助您将 ParaMind desktop 打包成可分发的安装程序，并说明当前可用的打包前提。
 
 ## 网络通信原理
 
@@ -23,15 +23,12 @@
 ### 1. 安装依赖
 
 ```bash
-# 安装Electron Builder
-npm install --save-dev electron-builder
-
-# 确保Python虚拟环境已创建
-python3 -m venv venv
-source venv/bin/activate  # Linux/Mac
-# 或 venv\Scripts\activate  # Windows
-pip install -r requirements.txt
+cd /Users/acropolis/Github_Project/Paramind/paramind/apps/desktop
+uv sync
+npm ci
 ```
+
+开发环境以 `uv` 管理 Python 依赖；`requirements.txt` 仅用于 `npm run build:python` 生成 portable Python 运行时。
 
 ### 2. 创建应用图标
 
@@ -45,6 +42,9 @@ pip install -r requirements.txt
 ```bash
 # 开发环境测试
 npm start
+
+# 构建 portable Python
+npm run build:python
 
 # 打包所有平台
 npm run build
@@ -61,14 +61,36 @@ npm run pack
 ### 4. 输出文件
 
 打包完成后，安装程序将位于 `dist/` 文件夹：
-- Windows: `Electron Python Chat Setup.exe`
-- macOS: `Electron Python Chat.dmg`
-- Linux: `Electron Python Chat.AppImage`
+- Windows: `ParaMind Setup.exe`（当前 portable Python 仍未默认支持）
+- macOS: `ParaMind.dmg`
+- Linux: `ParaMind.AppImage`
+
+## 当前平台支持状态
+
+- macOS Apple Silicon：已配置默认 portable Python 资产
+- macOS Intel：已配置默认 portable Python 资产
+- Linux x86_64：已配置默认 portable Python 资产
+- Windows：Electron metadata 已保留，但 `scripts/build-python.sh` 还没有默认 Windows portable Python 资产；在补齐并完成 smoke test 之前，不应把 Windows 视为 ready
+
+## Windows 本地开发脚本
+
+仓库现在额外提供了一个实验性的双实例启动脚本：
+
+```powershell
+npm run start:chat:win
+```
+
+它会尝试：
+- 清理 `9010 / 5001 / 5002` 端口上的残留监听进程
+- 启动两个 Electron 实例
+- 为两个实例分别注入 `peer-a` / `peer-b` 的环境变量
+
+这只是一个测试性质的 Windows 入口，不代表 Windows 已经 fully supported。如果你的 PowerShell、npm 路径或本地网络权限与默认假设不同，仍然需要自行调整 `scripts/start_chat.ps1`。
 
 ## 分发和安装
 
 ### Windows
-1. 分发 `Electron Python Chat Setup.exe`
+1. 分发 `ParaMind Setup.exe`
 2. 用户双击运行安装程序
 3. 安装程序会：
    - 安装应用到 Program Files
@@ -77,17 +99,17 @@ npm run pack
    - 自动启动应用
 
 ### macOS
-1. 分发 `Electron Python Chat.dmg`
+1. 分发 `ParaMind.dmg`
 2. 用户双击DMG文件
 3. 拖拽应用到Applications文件夹
 4. 首次运行可能需要允许安全设置
 
 ### Linux
-1. 分发 `Electron Python Chat.AppImage`
+1. 分发 `ParaMind.AppImage`
 2. 用户下载后：
    ```bash
-   chmod +x Electron\ Python\ Chat.AppImage
-   ./Electron\ Python\ Chat.AppImage
+   chmod +x ParaMind.AppImage
+   ./ParaMind.AppImage
    ```
 
 ## 网络通信测试
@@ -169,8 +191,8 @@ app.run(host='0.0.0.0', port=YOUR_PORT, debug=False)
 ## 性能优化
 
 1. **启动时间**
-   - Python虚拟环境会增加应用大小
-   - 考虑使用PyInstaller进一步优化
+   - portable Python 会增加应用大小
+   - 当前方案优先保证 packaged runtime 可独立运行，未做体积优化
 
 2. **内存使用**
    - 消息历史限制为50条

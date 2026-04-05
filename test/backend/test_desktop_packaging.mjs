@@ -55,6 +55,25 @@ test('resolveDesktopRuntimePaths uses process.resourcesPath in packaged mode', (
   ])
 })
 
+test('resolveDesktopRuntimePaths prefers python.exe for packaged windows runtime', () => {
+  const resourcesRoot = 'C:\\ParaMind\\resources'
+  const runtime = resolveDesktopRuntimePaths({
+    isPackaged: true,
+    appDir: desktopDir,
+    resourcesPath: resourcesRoot,
+    env: {},
+    platform: 'win32',
+    existsSync: (candidate) => candidate.endsWith('python-dist\\bin\\python.exe'),
+  })
+
+  assert.equal(runtime.pythonRoot, path.win32.join(resourcesRoot, 'python'))
+  assert.equal(
+    runtime.pythonCommand,
+    path.win32.join(resourcesRoot, 'python-dist', 'bin', 'python.exe')
+  )
+  assert.deepEqual(runtime.pythonArgs, [])
+})
+
 test('desktop package.json packages python runtime resources and no venv directory', () => {
   const packageJsonPath = path.join(desktopDir, 'package.json')
   const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'))
@@ -65,4 +84,17 @@ test('desktop package.json packages python runtime resources and no venv directo
   assert.ok(extraResources.some((entry) => entry.to === 'inference'))
   assert.ok(!extraResources.some((entry) => String(entry.from || '').includes('venv')))
   assert.ok(JSON.stringify(packageJson.build?.files || []).includes('!.venv/**/*'))
+  assert.equal(
+    packageJson.scripts?.['start:chat:win'],
+    'powershell -ExecutionPolicy Bypass -File scripts/start_chat.ps1'
+  )
+})
+
+test('desktop ships an experimental Windows multi-instance start script', () => {
+  const scriptPath = path.join(desktopDir, 'scripts', 'start_chat.ps1')
+  const scriptSource = fs.readFileSync(scriptPath, 'utf8')
+
+  assert.match(scriptSource, /Get-NetTCPConnection/)
+  assert.match(scriptSource, /npm\.cmd start/)
+  assert.match(scriptSource, /experimental/i)
 })

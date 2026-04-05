@@ -89,7 +89,9 @@ def test_coordinator_registers_peers_and_broadcasts_events():
         assert fanout["entity_id"] == "peer-a"
 
 
-def test_mock_p2p_adapter_uses_coordinator_transport_for_peer_listing_and_fanout(tmp_path):
+def test_mock_p2p_adapter_uses_coordinator_transport_for_peer_listing_and_fanout(
+    tmp_path,
+):
     database_path = Path(tmp_path) / "p2p.sqlite3"
     engine = create_sqlite_engine(database_path)
     init_db(engine)
@@ -305,12 +307,18 @@ def test_two_app_instances_sync_messages_via_real_http_coordinator(tmp_path):
         history = []
         while time.time() < deadline:
             history = client_b.get(f"/api/conversations/{general_id}/messages").json()
-            if any(item["content"] == "hello over http coordinator" for item in history):
+            if any(
+                item["content"] == "hello over http coordinator" for item in history
+            ):
                 break
             time.sleep(0.05)
 
         mirrored = next(
-            (item for item in history if item["content"] == "hello over http coordinator"),
+            (
+                item
+                for item in history
+                if item["content"] == "hello over http coordinator"
+            ),
             None,
         )
         assert mirrored is not None

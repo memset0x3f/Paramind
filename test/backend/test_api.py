@@ -160,7 +160,8 @@ def test_inference_job_creates_assistant_message_and_stream_events(tmp_path):
     while time.time() < deadline:
         messages = client.get(f"/api/conversations/{conversation_id}/messages").json()
         assistant = next(
-            (item for item in messages if item["id"] == job["assistant_message_id"]), None
+            (item for item in messages if item["id"] == job["assistant_message_id"]),
+            None,
         )
         if assistant and assistant["status"] == "completed":
             break
@@ -219,7 +220,9 @@ def test_second_instance_is_discoverable_as_peer(tmp_path):
     assert {"peer-a", "peer-b"} <= peer_ids
 
 
-def test_message_from_one_instance_is_visible_to_another_via_shared_coordinator_state(tmp_path):
+def test_message_from_one_instance_is_visible_to_another_via_shared_coordinator_state(
+    tmp_path,
+):
     coordinator_state = CoordinatorState()
     shared_transport = _CoordinatorStateTransport(coordinator_state)
     client_a = _make_client(
@@ -252,7 +255,9 @@ def test_message_from_one_instance_is_visible_to_another_via_shared_coordinator_
             break
         time.sleep(0.05)
 
-    mirrored = next((item for item in history if item["content"] == "hello from peer A"), None)
+    mirrored = next(
+        (item for item in history if item["content"] == "hello from peer A"), None
+    )
     assert mirrored is not None
     assert mirrored["role"] == "peer"
     assert mirrored["sender_id"] == "peer-a"
@@ -275,7 +280,9 @@ def test_dm_creation_is_idempotent_for_same_peer_pair(tmp_path):
     assert first.json()["id"] == second.json()["id"] == "dm:peer-a-peer-b"
 
 
-def test_global_events_stream_pulls_remote_transport_events_without_bootstrap_polling(tmp_path):
+def test_global_events_stream_pulls_remote_transport_events_without_bootstrap_polling(
+    tmp_path,
+):
     coordinator_state = CoordinatorState()
     shared_transport = _CoordinatorStateTransport(coordinator_state)
     client_a = _make_client(
@@ -299,7 +306,9 @@ def test_global_events_stream_pulls_remote_transport_events_without_bootstrap_po
     deadline = time.time() + 1.0
     events = []
     while time.time() < deadline:
-        stream_response = client_b.get("/api/events/stream", params={"after": 0, "limit": 128})
+        stream_response = client_b.get(
+            "/api/events/stream", params={"after": 0, "limit": 128}
+        )
         assert stream_response.status_code == 200
         events = _event_types(stream_response.text)
         if any(event_type == "dm.requested" for event_type, _ in events):
@@ -307,7 +316,6 @@ def test_global_events_stream_pulls_remote_transport_events_without_bootstrap_po
         time.sleep(0.05)
 
     assert any(event_type == "dm.requested" for event_type, _ in events)
-
 
 
 def test_conversation_stream_excludes_shell_only_lifecycle_events(tmp_path):
@@ -335,7 +343,9 @@ def test_conversation_stream_excludes_shell_only_lifecycle_events(tmp_path):
     deadline = time.time() + 1.0
     events = []
     while time.time() < deadline:
-        stream_response = client_b.get(f"/api/conversations/{general_id}/stream", params={"after": 0, "limit": 128})
+        stream_response = client_b.get(
+            f"/api/conversations/{general_id}/stream", params={"after": 0, "limit": 128}
+        )
         assert stream_response.status_code == 200
         events = _event_types(stream_response.text)
         if events:
@@ -370,7 +380,10 @@ def test_dm_request_accept_flow_creates_single_dm_conversation(tmp_path):
 
     inbox = client_b.get("/api/dm/requests")
     assert inbox.status_code == 200
-    assert any(item["id"] == request_id and item["direction"] == "inbound" for item in inbox.json())
+    assert any(
+        item["id"] == request_id and item["direction"] == "inbound"
+        for item in inbox.json()
+    )
 
     deadline = time.time() + 2.0
     inbox = []
@@ -387,8 +400,22 @@ def test_dm_request_accept_flow_creates_single_dm_conversation(tmp_path):
 
     bootstrap_a = client_a.get("/api/bootstrap").json()
     bootstrap_b = client_b.get("/api/bootstrap").json()
-    dm_a = next((item for item in bootstrap_a["conversations"] if item["id"] == "dm:peer-a-peer-b"), None)
-    dm_b = next((item for item in bootstrap_b["conversations"] if item["id"] == "dm:peer-a-peer-b"), None)
+    dm_a = next(
+        (
+            item
+            for item in bootstrap_a["conversations"]
+            if item["id"] == "dm:peer-a-peer-b"
+        ),
+        None,
+    )
+    dm_b = next(
+        (
+            item
+            for item in bootstrap_b["conversations"]
+            if item["id"] == "dm:peer-a-peer-b"
+        ),
+        None,
+    )
     assert dm_a is not None
     assert dm_b is not None
     assert sorted(dm_a["participant_ids"]) == ["peer-a", "peer-b"]
@@ -400,7 +427,9 @@ def test_dm_request_accept_flow_creates_single_dm_conversation(tmp_path):
     )
     assert stream_response.status_code == 200
     events = _event_types(stream_response.text)
-    accepted = next((payload for event_type, payload in events if event_type == "dm.accepted"), None)
+    accepted = next(
+        (payload for event_type, payload in events if event_type == "dm.accepted"), None
+    )
     assert accepted is not None
     assert accepted["payload"]["request"]["id"] == request_id
     assert accepted["payload"]["conversation"]["id"] == "dm:peer-a-peer-b"
@@ -410,7 +439,9 @@ def test_dm_request_accept_flow_creates_single_dm_conversation(tmp_path):
         params={"after": 0, "limit": 128},
     )
     assert conversation_stream.status_code == 200
-    conversation_event_names = [event_type for event_type, _ in _event_types(conversation_stream.text)]
+    conversation_event_names = [
+        event_type for event_type, _ in _event_types(conversation_stream.text)
+    ]
     assert "dm.accepted" not in conversation_event_names
 
 
@@ -564,15 +595,21 @@ def test_group_invitation_accept_flow_creates_group_for_accepting_peer_only(tmp_
     bootstrap_a = client_a.get("/api/bootstrap").json()
 
     group_id = payload["conversation"]["id"]
-    group_a = next((item for item in bootstrap_a["conversations"] if item["id"] == group_id), None)
-    group_b = next((item for item in bootstrap_b["conversations"] if item["id"] == group_id), None)
+    group_a = next(
+        (item for item in bootstrap_a["conversations"] if item["id"] == group_id), None
+    )
+    group_b = next(
+        (item for item in bootstrap_b["conversations"] if item["id"] == group_id), None
+    )
     assert group_a is not None
     assert group_b is not None
     assert all(item["id"] != group_id for item in bootstrap_c["conversations"])
     assert sorted(group_a["participant_ids"]) == ["peer-a", "peer-b"]
     assert sorted(group_b["participant_ids"]) == ["peer-a", "peer-b"]
 
-    global_events = client_a.get("/api/events/stream", params={"after": 0, "limit": 256})
+    global_events = client_a.get(
+        "/api/events/stream", params={"after": 0, "limit": 256}
+    )
     assert global_events.status_code == 200
     event_names = [event_type for event_type, _ in _event_types(global_events.text)]
     assert "group.accepted" in event_names
@@ -638,7 +675,9 @@ def test_accepting_group_invitation_returns_full_group_history(tmp_path):
     ]
 
 
-def test_group_invitation_events_are_visible_only_to_inviter_and_target_and_reject_keeps_group_hidden(tmp_path):
+def test_group_invitation_events_are_visible_only_to_inviter_and_target_and_reject_keeps_group_hidden(
+    tmp_path,
+):
     coordinator_state = CoordinatorState()
     shared_transport = _CoordinatorStateTransport(coordinator_state)
     client_a = _make_client(
@@ -693,9 +732,21 @@ def test_group_invitation_events_are_visible_only_to_inviter_and_target_and_reje
     assert invites_b == []
     assert [item["id"] for item in invites_c] == [invitation_id]
 
-    events_a = _event_types(client_a.get("/api/events/stream", params={"after": cursor_a, "limit": 128}).text)
-    events_b = _event_types(client_b.get("/api/events/stream", params={"after": cursor_b, "limit": 128}).text)
-    events_c = _event_types(client_c.get("/api/events/stream", params={"after": cursor_c, "limit": 128}).text)
+    events_a = _event_types(
+        client_a.get(
+            "/api/events/stream", params={"after": cursor_a, "limit": 128}
+        ).text
+    )
+    events_b = _event_types(
+        client_b.get(
+            "/api/events/stream", params={"after": cursor_b, "limit": 128}
+        ).text
+    )
+    events_c = _event_types(
+        client_c.get(
+            "/api/events/stream", params={"after": cursor_c, "limit": 128}
+        ).text
+    )
 
     assert "group.invited" in [event_type for event_type, _ in events_a]
     assert "group.invited" not in [event_type for event_type, _ in events_b]
@@ -709,7 +760,9 @@ def test_group_invitation_events_are_visible_only_to_inviter_and_target_and_reje
     assert all(item["id"] != group_id for item in bootstrap_c["conversations"])
 
 
-def test_existing_group_member_can_invite_new_peer_and_all_members_see_updated_participants(tmp_path):
+def test_existing_group_member_can_invite_new_peer_and_all_members_see_updated_participants(
+    tmp_path,
+):
     coordinator_state = CoordinatorState()
     shared_transport = _CoordinatorStateTransport(coordinator_state)
     client_a = _make_client(
@@ -759,9 +812,15 @@ def test_existing_group_member_can_invite_new_peer_and_all_members_see_updated_p
     bootstrap_b = client_b.get("/api/bootstrap").json()
     bootstrap_c = client_c.get("/api/bootstrap").json()
 
-    group_a = next(item for item in bootstrap_a["conversations"] if item["id"] == group_id)
-    group_b = next(item for item in bootstrap_b["conversations"] if item["id"] == group_id)
-    group_c = next(item for item in bootstrap_c["conversations"] if item["id"] == group_id)
+    group_a = next(
+        item for item in bootstrap_a["conversations"] if item["id"] == group_id
+    )
+    group_b = next(
+        item for item in bootstrap_b["conversations"] if item["id"] == group_id
+    )
+    group_c = next(
+        item for item in bootstrap_c["conversations"] if item["id"] == group_id
+    )
 
     assert sorted(group_a["participant_ids"]) == ["peer-a", "peer-b", "peer-c"]
     assert sorted(group_b["participant_ids"]) == ["peer-a", "peer-b", "peer-c"]
@@ -802,8 +861,14 @@ def test_leaving_group_updates_remaining_members_and_removes_group_for_leaver(tm
 
     invite_b = client_b.get("/api/group/invitations").json()[0]
     invite_c = client_c.get("/api/group/invitations").json()[0]
-    assert client_b.post(f"/api/group/invitations/{invite_b['id']}/accept").status_code == 200
-    assert client_c.post(f"/api/group/invitations/{invite_c['id']}/accept").status_code == 200
+    assert (
+        client_b.post(f"/api/group/invitations/{invite_b['id']}/accept").status_code
+        == 200
+    )
+    assert (
+        client_c.post(f"/api/group/invitations/{invite_c['id']}/accept").status_code
+        == 200
+    )
 
     left = client_b.post(f"/api/conversations/{group_id}/close")
     assert left.status_code == 200
@@ -812,8 +877,12 @@ def test_leaving_group_updates_remaining_members_and_removes_group_for_leaver(tm
     bootstrap_b = client_b.get("/api/bootstrap").json()
     bootstrap_c = client_c.get("/api/bootstrap").json()
 
-    group_a = next(item for item in bootstrap_a["conversations"] if item["id"] == group_id)
-    group_c = next(item for item in bootstrap_c["conversations"] if item["id"] == group_id)
+    group_a = next(
+        item for item in bootstrap_a["conversations"] if item["id"] == group_id
+    )
+    group_c = next(
+        item for item in bootstrap_c["conversations"] if item["id"] == group_id
+    )
     assert sorted(group_a["participant_ids"]) == ["peer-a", "peer-c"]
     assert sorted(group_c["participant_ids"]) == ["peer-a", "peer-c"]
     assert all(item["id"] != group_id for item in bootstrap_b["conversations"])
@@ -824,7 +893,9 @@ def test_ai_messages_do_not_add_virtual_participants_to_group_summary(tmp_path):
 
     bootstrap = client.get("/api/bootstrap").json()
     conversation_id = bootstrap["conversations"][0]["id"]
-    before = next(item for item in bootstrap["conversations"] if item["id"] == conversation_id)
+    before = next(
+        item for item in bootstrap["conversations"] if item["id"] == conversation_id
+    )
     assert "assistant" not in before["participant_ids"]
 
     requested = client.post(
@@ -845,7 +916,10 @@ def test_ai_messages_do_not_add_virtual_participants_to_group_summary(tmp_path):
     deadline = time.time() + 2.0
     while time.time() < deadline:
         history = client.get(f"/api/conversations/{conversation_id}/messages").json()
-        local_draft = next((item for item in history if item["id"] == draft.json()["draft"]["id"]), None)
+        local_draft = next(
+            (item for item in history if item["id"] == draft.json()["draft"]["id"]),
+            None,
+        )
         if local_draft and local_draft["status"] == "completed":
             break
         time.sleep(0.05)
@@ -854,13 +928,17 @@ def test_ai_messages_do_not_add_virtual_participants_to_group_summary(tmp_path):
     assert published.status_code == 201
 
     refreshed = client.get("/api/bootstrap").json()
-    after = next(item for item in refreshed["conversations"] if item["id"] == conversation_id)
+    after = next(
+        item for item in refreshed["conversations"] if item["id"] == conversation_id
+    )
     assert "assistant" not in after["participant_ids"]
     assert "ai" not in [item.lower() for item in after["participant_ids"]]
     assert sorted(after["participant_ids"]) == sorted(before["participant_ids"])
 
 
-def test_ai_draft_lifecycle_uses_explicit_user_ai_request_and_publish_turns_into_ai_message(tmp_path):
+def test_ai_draft_lifecycle_uses_explicit_user_ai_request_and_publish_turns_into_ai_message(
+    tmp_path,
+):
     coordinator_state = CoordinatorState()
     shared_transport = _CoordinatorStateTransport(coordinator_state)
     client_a = _make_client(
@@ -900,8 +978,12 @@ def test_ai_draft_lifecycle_uses_explicit_user_ai_request_and_publish_turns_into
     deadline = time.time() + 2.0
     draft_history = []
     while time.time() < deadline:
-        draft_history = client_a.get(f"/api/conversations/{conversation_id}/messages").json()
-        local_draft = next((item for item in draft_history if item["id"] == draft_id), None)
+        draft_history = client_a.get(
+            f"/api/conversations/{conversation_id}/messages"
+        ).json()
+        local_draft = next(
+            (item for item in draft_history if item["id"] == draft_id), None
+        )
         if local_draft and local_draft["status"] == "completed":
             break
         time.sleep(0.05)
@@ -910,18 +992,28 @@ def test_ai_draft_lifecycle_uses_explicit_user_ai_request_and_publish_turns_into
     assert local_draft is not None
     assert local_draft["metadata"]["local_draft"] is True
     bootstrap_after_draft = client_a.get("/api/bootstrap").json()
-    general_after_draft = next(item for item in bootstrap_after_draft["conversations"] if item["id"] == conversation_id)
+    general_after_draft = next(
+        item
+        for item in bootstrap_after_draft["conversations"]
+        if item["id"] == conversation_id
+    )
     assert general_after_draft["last_message"]["id"] == request_message["id"]
 
-    remote_history = client_b.get(f"/api/conversations/{conversation_id}/messages").json()
-    mirrored_request = next((item for item in remote_history if item["id"] == request_message["id"]), None)
+    remote_history = client_b.get(
+        f"/api/conversations/{conversation_id}/messages"
+    ).json()
+    mirrored_request = next(
+        (item for item in remote_history if item["id"] == request_message["id"]), None
+    )
     assert mirrored_request is not None
     assert mirrored_request["role"] == "peer"
     assert mirrored_request["content"] == "@AI 介绍一下你自己"
 
     assert all(item["id"] != draft_id for item in remote_history)
 
-    updated = client_a.patch(f"/api/ai/drafts/{draft_id}", json={"content": "这是经过编辑的草稿"})
+    updated = client_a.patch(
+        f"/api/ai/drafts/{draft_id}", json={"content": "这是经过编辑的草稿"}
+    )
     assert updated.status_code == 200
     assert updated.json()["content"] == "这是经过编辑的草稿"
 
@@ -934,8 +1026,17 @@ def test_ai_draft_lifecycle_uses_explicit_user_ai_request_and_publish_turns_into
     deadline = time.time() + 2.0
     mirrored = None
     while time.time() < deadline:
-        remote_history = client_b.get(f"/api/conversations/{conversation_id}/messages").json()
-        mirrored = next((item for item in remote_history if item["content"] == "这是经过编辑的草稿"), None)
+        remote_history = client_b.get(
+            f"/api/conversations/{conversation_id}/messages"
+        ).json()
+        mirrored = next(
+            (
+                item
+                for item in remote_history
+                if item["content"] == "这是经过编辑的草稿"
+            ),
+            None,
+        )
         if mirrored is not None:
             break
         time.sleep(0.05)
@@ -944,11 +1045,15 @@ def test_ai_draft_lifecycle_uses_explicit_user_ai_request_and_publish_turns_into
     assert mirrored["role"] == "assistant"
     assert mirrored["sender_name"] == "AI"
 
-    local_after_send = client_a.get(f"/api/conversations/{conversation_id}/messages").json()
+    local_after_send = client_a.get(
+        f"/api/conversations/{conversation_id}/messages"
+    ).json()
     assert all(item["id"] != draft_id for item in local_after_send)
 
 
-def test_published_ai_message_syncs_as_formal_assistant_message_without_leaking_local_draft(tmp_path):
+def test_published_ai_message_syncs_as_formal_assistant_message_without_leaking_local_draft(
+    tmp_path,
+):
     coordinator_state = CoordinatorState()
     shared_transport = _CoordinatorStateTransport(coordinator_state)
     client_a = _make_client(
@@ -986,8 +1091,12 @@ def test_published_ai_message_syncs_as_formal_assistant_message_without_leaking_
 
     deadline = time.time() + 2.0
     while time.time() < deadline:
-        local_history = client_a.get(f"/api/conversations/{conversation_id}/messages").json()
-        local_draft = next((item for item in local_history if item["id"] == draft_id), None)
+        local_history = client_a.get(
+            f"/api/conversations/{conversation_id}/messages"
+        ).json()
+        local_draft = next(
+            (item for item in local_history if item["id"] == draft_id), None
+        )
         if local_draft and local_draft["status"] == "completed":
             break
         time.sleep(0.05)
@@ -1002,8 +1111,13 @@ def test_published_ai_message_syncs_as_formal_assistant_message_without_leaking_
     remote_published = None
     remote_history = []
     while time.time() < deadline:
-        remote_history = client_b.get(f"/api/conversations/{conversation_id}/messages").json()
-        remote_published = next((item for item in remote_history if item["id"] == published.json()["id"]), None)
+        remote_history = client_b.get(
+            f"/api/conversations/{conversation_id}/messages"
+        ).json()
+        remote_published = next(
+            (item for item in remote_history if item["id"] == published.json()["id"]),
+            None,
+        )
         if remote_published is not None:
             break
         time.sleep(0.05)
@@ -1044,8 +1158,12 @@ def test_remote_message_sync_preserves_source_timestamps(tmp_path):
     deadline = time.time() + 2.0
     remote_message = None
     while time.time() < deadline:
-        remote_history = client_b.get(f"/api/conversations/{conversation_id}/messages").json()
-        remote_message = next((item for item in remote_history if item["id"] == local_message["id"]), None)
+        remote_history = client_b.get(
+            f"/api/conversations/{conversation_id}/messages"
+        ).json()
+        remote_message = next(
+            (item for item in remote_history if item["id"] == local_message["id"]), None
+        )
         if remote_message is not None:
             break
         time.sleep(0.05)
@@ -1056,8 +1174,12 @@ def test_remote_message_sync_preserves_source_timestamps(tmp_path):
 
     bootstrap_a = client_a.get("/api/bootstrap").json()
     bootstrap_b = client_b.get("/api/bootstrap").json()
-    local_conversation = next(item for item in bootstrap_a["conversations"] if item["id"] == conversation_id)
-    remote_conversation = next(item for item in bootstrap_b["conversations"] if item["id"] == conversation_id)
+    local_conversation = next(
+        item for item in bootstrap_a["conversations"] if item["id"] == conversation_id
+    )
+    remote_conversation = next(
+        item for item in bootstrap_b["conversations"] if item["id"] == conversation_id
+    )
     assert remote_conversation["updated_at"] == local_conversation["updated_at"]
 
 
@@ -1090,8 +1212,12 @@ def test_message_ack_and_sync_events_expose_read_status(tmp_path):
     deadline = time.time() + 2.0
     mirrored = None
     while time.time() < deadline:
-        remote_history = client_b.get(f"/api/conversations/{conversation_id}/messages").json()
-        mirrored = next((item for item in remote_history if item["id"] == message_id), None)
+        remote_history = client_b.get(
+            f"/api/conversations/{conversation_id}/messages"
+        ).json()
+        mirrored = next(
+            (item for item in remote_history if item["id"] == message_id), None
+        )
         if mirrored is not None:
             break
         time.sleep(0.05)

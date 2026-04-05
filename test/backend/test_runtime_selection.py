@@ -83,7 +83,9 @@ def test_inference_runner_raises_when_real_engine_cannot_initialize(monkeypatch)
         asyncio.run(collect())
 
 
-def test_inference_runner_keeps_event_loop_responsive_during_sync_generation(monkeypatch):
+def test_inference_runner_keeps_event_loop_responsive_during_sync_generation(
+    monkeypatch,
+):
     class SlowEngine:
         def __init__(self, *args, **kwargs):
             pass

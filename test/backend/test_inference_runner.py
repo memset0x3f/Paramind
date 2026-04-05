@@ -21,6 +21,7 @@ def test_stream_tokens_uses_higher_generation_cap():
     )
     runner = InferenceRunner(settings)
     runner._engine = _FakeEngine()
+
     async def collect():
         tokens = []
         async for token in runner.stream_tokens("hello"):
@@ -62,5 +63,6 @@ def test_stream_tokens_raises_when_engine_preload_failed_instead_of_using_mock_t
         return tokens
 
     import pytest
+
     with pytest.raises(RuntimeError, match="engine unavailable"):
         asyncio.run(collect())

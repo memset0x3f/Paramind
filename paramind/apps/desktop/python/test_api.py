@@ -7,10 +7,11 @@ import time
 
 BASE_URL = "http://127.0.0.1:5001"
 
+
 def test_endpoint(method, endpoint, data=None, expected_status=200):
     """Test a single API endpoint"""
     url = f"{BASE_URL}{endpoint}"
-    
+
     try:
         if method.upper() == "GET":
             response = requests.get(url)
@@ -19,20 +20,24 @@ def test_endpoint(method, endpoint, data=None, expected_status=200):
         else:
             print(f"❌ Unsupported method: {method}")
             return False
-        
+
         if response.status_code == expected_status:
             print(f"✅ {method} {endpoint} - Status: {response.status_code}")
             try:
                 result = response.json()
-                print(f"   Response: {json.dumps(result, indent=2, ensure_ascii=False)}")
+                print(
+                    f"   Response: {json.dumps(result, indent=2, ensure_ascii=False)}"
+                )
             except:
                 print(f"   Response: {response.text}")
             return True
         else:
-            print(f"❌ {method} {endpoint} - Expected: {expected_status}, Got: {response.status_code}")
+            print(
+                f"❌ {method} {endpoint} - Expected: {expected_status}, Got: {response.status_code}"
+            )
             print(f"   Response: {response.text}")
             return False
-            
+
     except requests.exceptions.ConnectionError:
         print(f"❌ {method} {endpoint} - Connection failed (server not running?)")
         return False
@@ -40,13 +45,14 @@ def test_endpoint(method, endpoint, data=None, expected_status=200):
         print(f"❌ {method} {endpoint} - Error: {e}")
         return False
 
+
 def main():
     print("🧪 Testing ParaMind FastAPI Desktop Backend")
     print("=" * 50)
-    
+
     # Wait a moment for server to be ready
     time.sleep(1)
-    
+
     bootstrap_ok = test_endpoint("GET", "/api/bootstrap", None, 200)
     if not bootstrap_ok:
         print("⚠️ bootstrap failed; skipping the rest")
@@ -66,24 +72,25 @@ def main():
             201,
         ),
     ]
-    
+
     passed = 0
     total = len(tests)
-    
+
     for method, endpoint, data, expected_status in tests:
         if test_endpoint(method, endpoint, data, expected_status):
             passed += 1
         print()  # Empty line for readability
-    
+
     print("=" * 50)
     print(f"📊 Test Results: {passed}/{total} tests passed")
-    
+
     if passed == total:
         print("🎉 All tests passed! Backend is working correctly.")
         return True
     else:
         print("⚠️  Some tests failed. Check the output above.")
         return False
+
 
 if __name__ == "__main__":
     success = main()

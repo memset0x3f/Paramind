@@ -58,7 +58,11 @@ def create_app(test_mode: bool = False, settings_overrides: Optional[dict] = Non
     async def lifespan(app: FastAPI):
         app.state.worker_task = asyncio.create_task(service.worker_loop())
         app.state.heartbeat_task = asyncio.create_task(service.heartbeat_loop())
-        app.state.preload_task = None if settings.test_mode else asyncio.create_task(service.inference.preload())
+        app.state.preload_task = (
+            None
+            if settings.test_mode
+            else asyncio.create_task(service.inference.preload())
+        )
         yield
         service.stop_event.set()
         app.state.worker_task.cancel()
@@ -90,7 +94,11 @@ def create_app(test_mode: bool = False, settings_overrides: Optional[dict] = Non
         bootstrap_data = service.bootstrap_payload()
         return {
             "model_id": bootstrap_data["model"]["model_id"],
-            "mode": "distributed" if bootstrap_data["network"]["peer_count"] > 1 else "local",
+            "mode": (
+                "distributed"
+                if bootstrap_data["network"]["peer_count"] > 1
+                else "local"
+            ),
             "device": bootstrap_data["model"]["device"],
             "family": bootstrap_data["model"]["family"],
         }
@@ -121,14 +129,24 @@ def create_app(test_mode: bool = False, settings_overrides: Optional[dict] = Non
     def create_group_invitations(payload: dict):
         title = str(payload.get("title") or "").strip()
         conversation_id = str(payload.get("conversation_id") or "").strip() or None
-        target_peer_ids = [str(item).strip() for item in list(payload.get("target_peer_ids") or []) if str(item).strip()]
+        target_peer_ids = [
+            str(item).strip()
+            for item in list(payload.get("target_peer_ids") or [])
+            if str(item).strip()
+        ]
         if not target_peer_ids:
             raise HTTPException(status_code=400, detail="target_peer_ids are required")
         if not title and not conversation_id:
-            raise HTTPException(status_code=400, detail="title or conversation_id is required")
-        created = service.create_group_invitations(title, target_peer_ids, conversation_id=conversation_id)
+            raise HTTPException(
+                status_code=400, detail="title or conversation_id is required"
+            )
+        created = service.create_group_invitations(
+            title, target_peer_ids, conversation_id=conversation_id
+        )
         if created is None:
-            raise HTTPException(status_code=400, detail="unable to create group invitations")
+            raise HTTPException(
+                status_code=400, detail="unable to create group invitations"
+            )
         return created
 
     @app.post("/api/dm/requests/{request_id}/accept")
@@ -166,7 +184,9 @@ def create_app(test_mode: bool = False, settings_overrides: Optional[dict] = Non
         participant_ids = list(payload.get("participant_ids") or [])
         if not title:
             raise HTTPException(status_code=400, detail="title is required")
-        return service.create_conversation(title=title, kind=kind, participant_ids=participant_ids)
+        return service.create_conversation(
+            title=title, kind=kind, participant_ids=participant_ids
+        )
 
     @app.get("/api/conversations/{conversation_id}")
     def get_conversation(conversation_id: str):
@@ -202,7 +222,9 @@ def create_app(test_mode: bool = False, settings_overrides: Optional[dict] = Non
         content = str(payload.get("content") or "").strip()
         if not content:
             raise HTTPException(status_code=400, detail="content is required")
-        message = service.create_message(conversation_id=conversation_id, role=role, content=content)
+        message = service.create_message(
+            conversation_id=conversation_id, role=role, content=content
+        )
         if message is None:
             raise HTTPException(status_code=404, detail="conversation not found")
         return message
@@ -213,16 +235,22 @@ def create_app(test_mode: bool = False, settings_overrides: Optional[dict] = Non
         prompt = str(payload.get("prompt") or "").strip()
         source_message_id = str(payload.get("source_message_id") or "").strip()
         if not conversation_id or (not prompt and not source_message_id):
-            raise HTTPException(status_code=400, detail="conversation_id and either prompt or source_message_id are required")
+            raise HTTPException(
+                status_code=400,
+                detail="conversation_id and either prompt or source_message_id are required",
+            )
         result = service.create_ai_draft(
             conversation_id,
             prompt=prompt or None,
             source_message_id=source_message_id or None,
         )
         if result is None:
-            raise HTTPException(status_code=404, detail="conversation or source message not found")
+            raise HTTPException(
+                status_code=404, detail="conversation or source message not found"
+            )
         if service.settings.test_mode:
             import asyncio
+
             asyncio.create_task(service._run_job(result["job"]["id"]))
         else:
             await service.enqueue_job(result["job"]["id"])
@@ -331,7 +359,9 @@ def create_app(test_mode: bool = False, settings_overrides: Optional[dict] = Non
             )
         job = service.create_inference_job(conversation_id, user_message_id)
         if job is None:
-            raise HTTPException(status_code=404, detail="conversation or message not found")
+            raise HTTPException(
+                status_code=404, detail="conversation or message not found"
+            )
         if service.settings.test_mode:
             await service._run_job(job["id"])
         else:

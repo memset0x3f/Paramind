@@ -95,13 +95,24 @@ class DesktopAppService:
                 | (DmRequest.target_peer_id == self.settings.instance_id)
             )
         ).all()
-        dm_conversations = session.exec(select(Conversation).where(Conversation.kind == "dm")).all()
+        dm_conversations = session.exec(
+            select(Conversation).where(Conversation.kind == "dm")
+        ).all()
 
         active_by_peer: dict[str, str] = {}
         for conversation in dm_conversations:
-            participant_ids = self._conversation_participant_ids(session, conversation.id)
+            participant_ids = self._conversation_participant_ids(
+                session, conversation.id
+            )
             if self.settings.instance_id in participant_ids:
-                counterpart = next((item for item in participant_ids if item != self.settings.instance_id), None)
+                counterpart = next(
+                    (
+                        item
+                        for item in participant_ids
+                        if item != self.settings.instance_id
+                    ),
+                    None,
+                )
                 if counterpart:
                     active_by_peer[counterpart] = conversation.id
 
@@ -113,7 +124,11 @@ class DesktopAppService:
                 else request.requester_id
             )
             pending_by_peer[counterpart] = (
-                "outbound_pending_dm" if request.requester_id == self.settings.instance_id else "inbound_pending_dm",
+                (
+                    "outbound_pending_dm"
+                    if request.requester_id == self.settings.instance_id
+                    else "inbound_pending_dm"
+                ),
                 request.id,
             )
 
@@ -144,20 +159,27 @@ class DesktopAppService:
         return [
             item.peer_id
             for item in session.exec(
-                select(Participant).where(Participant.conversation_id == conversation_id)
+                select(Participant).where(
+                    Participant.conversation_id == conversation_id
+                )
             ).all()
         ]
 
     def _is_virtual_participant(self, peer_id: str | None):
         return str(peer_id or "").strip().lower() in {"assistant", "ai"}
 
-    def _conversation_summary_participant_ids(self, session: Session, conversation: Conversation):
+    def _conversation_summary_participant_ids(
+        self, session: Session, conversation: Conversation
+    ):
         participant_ids = {
             peer_id
             for peer_id in self._conversation_participant_ids(session, conversation.id)
             if not self._is_virtual_participant(peer_id)
         }
-        if conversation.id == self.default_conversation_id and conversation.kind == "group":
+        if (
+            conversation.id == self.default_conversation_id
+            and conversation.kind == "group"
+        ):
             participant_ids |= {
                 peer.id
                 for peer in session.exec(select(Peer)).all()
@@ -175,7 +197,9 @@ class DesktopAppService:
 
     def _recover_jobs(self, session: Session):
         jobs = session.exec(
-            select(InferenceJob).where(InferenceJob.status.in_(["queued", "running", "streaming"]))
+            select(InferenceJob).where(
+                InferenceJob.status.in_(["queued", "running", "streaming"])
+            )
         ).all()
         for job in jobs:
             job.status = "failed"
@@ -210,7 +234,9 @@ class DesktopAppService:
             session.add(existing)
             session.flush()
             session.add(
-                Participant(conversation_id=existing.id, peer_id=self.settings.instance_id)
+                Participant(
+                    conversation_id=existing.id, peer_id=self.settings.instance_id
+                )
             )
             self._record_event(
                 session,
@@ -312,7 +338,11 @@ class DesktopAppService:
             "direction": (
                 "outbound"
                 if request.requester_id == self.settings.instance_id
-                else "inbound" if request.target_peer_id == self.settings.instance_id else "external"
+                else (
+                    "inbound"
+                    if request.target_peer_id == self.settings.instance_id
+                    else "external"
+                )
             ),
         }
 
@@ -331,7 +361,11 @@ class DesktopAppService:
             "direction": (
                 "outbound"
                 if invitation.inviter_id == self.settings.instance_id
-                else "inbound" if invitation.target_peer_id == self.settings.instance_id else "external"
+                else (
+                    "inbound"
+                    if invitation.target_peer_id == self.settings.instance_id
+                    else "external"
+                )
             ),
         }
 
@@ -359,8 +393,12 @@ class DesktopAppService:
             "title": conversation.title,
             "kind": conversation.kind,
             "updated_at": _dt(conversation.updated_at),
-            "participant_ids": self._conversation_summary_participant_ids(session, conversation),
-            "last_message": self._serialize_message(last_message) if last_message else None,
+            "participant_ids": self._conversation_summary_participant_ids(
+                session, conversation
+            ),
+            "last_message": (
+                self._serialize_message(last_message) if last_message else None
+            ),
         }
 
     def _serialize_conversation_messages(self, session: Session, conversation_id: str):
@@ -384,7 +422,9 @@ class DesktopAppService:
         metadata_dict = {
             "conversation_title": conversation.title,
             "conversation_kind": conversation.kind,
-            "participant_ids": self._conversation_summary_participant_ids(session, conversation),
+            "participant_ids": self._conversation_summary_participant_ids(
+                session, conversation
+            ),
             "local_draft": False,
         }
         if metadata:
@@ -421,15 +461,20 @@ class DesktopAppService:
         return message
 
     def _latest_conversation_event_id(self, session: Session, conversation_id: str):
-        return session.exec(
-            select(EventLog.id)
-            .where(EventLog.scope == "conversation")
-            .where(EventLog.conversation_id == conversation_id)
-            .order_by(desc(EventLog.id))
-            .limit(1)
-        ).first() or 0
+        return (
+            session.exec(
+                select(EventLog.id)
+                .where(EventLog.scope == "conversation")
+                .where(EventLog.conversation_id == conversation_id)
+                .order_by(desc(EventLog.id))
+                .limit(1)
+            ).first()
+            or 0
+        )
 
-    def _backfill_conversation_history_from_transport(self, session: Session, conversation_id: str):
+    def _backfill_conversation_history_from_transport(
+        self, session: Session, conversation_id: str
+    ):
         for event in self.p2p.list_events(after=0, limit=None):
             if str(event.get("conversation_id") or "") != conversation_id:
                 continue
@@ -445,12 +490,20 @@ class DesktopAppService:
             self.p2p.sweep_stale_peers(session)
             self.p2p.upsert_self(session)
             self._reconcile_relationships(session)
-            latest_global_event_id = session.exec(
-                select(EventLog.id).where(EventLog.scope == "global").order_by(desc(EventLog.id)).limit(1)
-            ).first() or 0
+            latest_global_event_id = (
+                session.exec(
+                    select(EventLog.id)
+                    .where(EventLog.scope == "global")
+                    .order_by(desc(EventLog.id))
+                    .limit(1)
+                ).first()
+                or 0
+            )
             latest_conversation_events: dict[str, int] = {}
             for row in session.exec(
-                select(EventLog).where(EventLog.scope == "conversation").order_by(EventLog.id)
+                select(EventLog)
+                .where(EventLog.scope == "conversation")
+                .order_by(EventLog.id)
             ).all():
                 if row.conversation_id:
                     latest_conversation_events[row.conversation_id] = int(row.id or 0)
@@ -464,7 +517,7 @@ class DesktopAppService:
                     (DmRequest.requester_id == self.settings.instance_id)
                     | (DmRequest.target_peer_id == self.settings.instance_id)
                 )
-                .where(DmRequest.status == 'pending')
+                .where(DmRequest.status == "pending")
                 .order_by(desc(DmRequest.updated_at))
             ).all()
             group_invitations = session.exec(
@@ -492,7 +545,9 @@ class DesktopAppService:
                 },
                 "network": {
                     "transport": self.settings.transport,
-                    "peer_count": len([peer for peer in peers if peer.status == "online"]),
+                    "peer_count": len(
+                        [peer for peer in peers if peer.status == "online"]
+                    ),
                 },
                 "latest_event_id": int(latest_global_event_id),
                 "latest_global_event_id": int(latest_global_event_id),
@@ -502,11 +557,15 @@ class DesktopAppService:
                     for conversation in conversations
                 ],
                 "peers": [self._serialize_peer(peer) for peer in peers],
-                "dm_requests": [self._serialize_dm_request(item) for item in dm_requests],
+                "dm_requests": [
+                    self._serialize_dm_request(item) for item in dm_requests
+                ],
                 "group_invitations": [
                     self._serialize_group_invitation(item) for item in group_invitations
                 ],
-                "relationships": [self._serialize_relationship(item) for item in relationships],
+                "relationships": [
+                    self._serialize_relationship(item) for item in relationships
+                ],
             }
 
     def list_conversations(self):
@@ -515,19 +574,28 @@ class DesktopAppService:
             conversations = session.exec(
                 select(Conversation).order_by(desc(Conversation.updated_at))
             ).all()
-            return [self._serialize_conversation(session, conversation) for conversation in conversations]
+            return [
+                self._serialize_conversation(session, conversation)
+                for conversation in conversations
+            ]
 
-    def create_conversation(self, title: str, kind: str, participant_ids: list[str] | None = None):
+    def create_conversation(
+        self, title: str, kind: str, participant_ids: list[str] | None = None
+    ):
         participant_ids = participant_ids or []
         with session_scope(self.engine) as session:
             unique_participants = sorted({self.settings.instance_id, *participant_ids})
             conversation_id = None
             if kind == "dm" and unique_participants:
                 conversation_id = f"dm:{'-'.join(unique_participants)}"
-            conversation = session.get(Conversation, conversation_id) if conversation_id else None
+            conversation = (
+                session.get(Conversation, conversation_id) if conversation_id else None
+            )
             created = conversation is None
             if conversation is None:
-                conversation = Conversation(id=conversation_id or None, title=title, kind=kind)
+                conversation = Conversation(
+                    id=conversation_id or None, title=title, kind=kind
+                )
                 session.add(conversation)
                 session.flush()
             else:
@@ -559,7 +627,7 @@ class DesktopAppService:
                     (DmRequest.requester_id == self.settings.instance_id)
                     | (DmRequest.target_peer_id == self.settings.instance_id)
                 )
-                .where(DmRequest.status == 'pending')
+                .where(DmRequest.status == "pending")
                 .order_by(desc(DmRequest.updated_at))
             ).all()
             return [self._serialize_dm_request(item) for item in rows]
@@ -581,7 +649,8 @@ class DesktopAppService:
     def create_dm_request(self, target_peer_id: str):
         with session_scope(self.engine) as session:
             existing_dm = session.get(
-                Conversation, f"dm:{'-'.join(sorted([self.settings.instance_id, target_peer_id]))}"
+                Conversation,
+                f"dm:{'-'.join(sorted([self.settings.instance_id, target_peer_id]))}",
             )
             if existing_dm is not None:
                 return {
@@ -625,7 +694,14 @@ class DesktopAppService:
                 "dm.requested",
                 None,
                 request.id,
-                {"request": payload, "relationship": {"peer_id": target_peer_id, "relationship": "outbound_pending_dm", "request_id": request.id}},
+                {
+                    "request": payload,
+                    "relationship": {
+                        "peer_id": target_peer_id,
+                        "relationship": "outbound_pending_dm",
+                        "request_id": request.id,
+                    },
+                },
             )
             return payload
 
@@ -636,30 +712,44 @@ class DesktopAppService:
         conversation_id: str | None = None,
     ):
         with session_scope(self.engine) as session:
-            requested_target_ids = sorted({str(item) for item in target_peer_ids if str(item).strip() and str(item) != self.settings.instance_id})
+            requested_target_ids = sorted(
+                {
+                    str(item)
+                    for item in target_peer_ids
+                    if str(item).strip() and str(item) != self.settings.instance_id
+                }
+            )
             if not requested_target_ids:
                 return None
 
-            conversation = session.get(Conversation, conversation_id) if conversation_id else None
+            conversation = (
+                session.get(Conversation, conversation_id) if conversation_id else None
+            )
             created_conversation = False
 
             if conversation_id:
                 if conversation is None or conversation.kind != "group":
                     return None
-                existing_participants = set(self._conversation_participant_ids(session, conversation.id))
+                existing_participants = set(
+                    self._conversation_participant_ids(session, conversation.id)
+                )
                 if self.settings.instance_id not in existing_participants:
                     return None
                 if conversation.id == self.default_conversation_id:
                     return None
                 title = conversation.title
             else:
-                unique_participants = sorted({self.settings.instance_id, *requested_target_ids})
+                unique_participants = sorted(
+                    {self.settings.instance_id, *requested_target_ids}
+                )
                 if len(unique_participants) < 2:
                     return None
                 conversation = Conversation(title=title, kind="group")
                 session.add(conversation)
                 session.flush()
-                self._ensure_participant(session, conversation.id, self.settings.instance_id)
+                self._ensure_participant(
+                    session, conversation.id, self.settings.instance_id
+                )
                 created_conversation = True
 
             pending_targets = {
@@ -670,11 +760,14 @@ class DesktopAppService:
                     .where(GroupInvitation.status == "pending")
                 ).all()
             }
-            existing_participants = set(self._conversation_participant_ids(session, conversation.id))
+            existing_participants = set(
+                self._conversation_participant_ids(session, conversation.id)
+            )
             invite_targets = [
                 peer_id
                 for peer_id in requested_target_ids
-                if peer_id not in existing_participants and peer_id not in pending_targets
+                if peer_id not in existing_participants
+                and peer_id not in pending_targets
             ]
             if not invite_targets:
                 return None
@@ -688,7 +781,9 @@ class DesktopAppService:
                     inviter_id=self.settings.instance_id,
                     target_peer_id=peer_id,
                     title=title,
-                    participant_ids_json=json.dumps(summary_participants, ensure_ascii=False),
+                    participant_ids_json=json.dumps(
+                        summary_participants, ensure_ascii=False
+                    ),
                     status="pending",
                 )
                 session.add(invitation)
@@ -699,7 +794,10 @@ class DesktopAppService:
                     "group.invited",
                     None,
                     invitation.id,
-                    {"invitation": invitations[-1], "conversation": conversation_payload},
+                    {
+                        "invitation": invitations[-1],
+                        "conversation": conversation_payload,
+                    },
                     scope="global",
                 )
             if created_conversation:
@@ -759,7 +857,9 @@ class DesktopAppService:
                     title=self.settings.instance_name,
                 )
                 request.conversation_id = conversation.id
-                conversation_payload = self._serialize_conversation(session, conversation)
+                conversation_payload = self._serialize_conversation(
+                    session, conversation
+                )
                 self._record_event(
                     session,
                     "conversation.created",
@@ -788,8 +888,11 @@ class DesktopAppService:
                     "request": payload,
                     "conversation": conversation_payload,
                     "relationship": (
-                        self._serialize_relationship(session.get(PeerRelationship, request.requester_id))
-                        if session.get(PeerRelationship, request.requester_id) is not None
+                        self._serialize_relationship(
+                            session.get(PeerRelationship, request.requester_id)
+                        )
+                        if session.get(PeerRelationship, request.requester_id)
+                        is not None
                         else None
                     ),
                 },
@@ -801,7 +904,10 @@ class DesktopAppService:
         self.process_transport_events()
         with session_scope(self.engine) as session:
             invitation = session.get(GroupInvitation, invitation_id)
-            if invitation is None or invitation.target_peer_id != self.settings.instance_id:
+            if (
+                invitation is None
+                or invitation.target_peer_id != self.settings.instance_id
+            ):
                 return None
             if invitation.status != "pending":
                 return None
@@ -809,7 +915,10 @@ class DesktopAppService:
             invitation.status = "accepted" if accept else "rejected"
             invitation.responded_at = utcnow()
             invitation.updated_at = utcnow()
-            participant_ids = [str(item) for item in json.loads(invitation.participant_ids_json or "[]")]
+            participant_ids = [
+                str(item)
+                for item in json.loads(invitation.participant_ids_json or "[]")
+            ]
             if self.settings.instance_id not in participant_ids:
                 participant_ids.append(self.settings.instance_id)
             participant_ids = sorted(set(participant_ids))
@@ -827,21 +936,38 @@ class DesktopAppService:
                     )
                     session.add(conversation)
                     session.flush()
-                existing_participants = set(self._conversation_participant_ids(session, conversation.id))
-                for peer_id in sorted(existing_participants | set(participant_ids) | {invitation.inviter_id, self.settings.instance_id}):
+                existing_participants = set(
+                    self._conversation_participant_ids(session, conversation.id)
+                )
+                for peer_id in sorted(
+                    existing_participants
+                    | set(participant_ids)
+                    | {invitation.inviter_id, self.settings.instance_id}
+                ):
                     self._ensure_participant(session, conversation.id, peer_id)
                 conversation.updated_at = utcnow()
-                self._backfill_conversation_history_from_transport(session, conversation.id)
+                self._backfill_conversation_history_from_transport(
+                    session, conversation.id
+                )
                 self._create_system_message(
                     session,
                     conversation,
                     f"{self.settings.instance_name} joined the group",
-                    metadata={"kind": "group.member_joined", "peer_id": self.settings.instance_id},
+                    metadata={
+                        "kind": "group.member_joined",
+                        "peer_id": self.settings.instance_id,
+                    },
                     broadcast=True,
                 )
-                conversation_payload = self._serialize_conversation(session, conversation)
-                messages_payload = self._serialize_conversation_messages(session, conversation.id)
-                latest_conversation_event_id = int(self._latest_conversation_event_id(session, conversation.id))
+                conversation_payload = self._serialize_conversation(
+                    session, conversation
+                )
+                messages_payload = self._serialize_conversation_messages(
+                    session, conversation.id
+                )
+                latest_conversation_event_id = int(
+                    self._latest_conversation_event_id(session, conversation.id)
+                )
                 self._record_event(
                     session,
                     "conversation.created",
@@ -867,18 +993,26 @@ class DesktopAppService:
                 scope="global",
             )
             session.delete(invitation)
-            return {
-                "invitation": payload,
-                "conversation": conversation_payload,
-                "messages": messages_payload,
-                "latest_conversation_event_id": latest_conversation_event_id,
-            } if accept else payload
+            return (
+                {
+                    "invitation": payload,
+                    "conversation": conversation_payload,
+                    "messages": messages_payload,
+                    "latest_conversation_event_id": latest_conversation_event_id,
+                }
+                if accept
+                else payload
+            )
 
-    def _ensure_remote_conversation(self, session: Session, conversation_payload: dict[str, Any]):
+    def _ensure_remote_conversation(
+        self, session: Session, conversation_payload: dict[str, Any]
+    ):
         conversation_id = str(conversation_payload["id"])
         conversation = session.get(Conversation, conversation_id)
         created = conversation is None
-        remote_updated_at = _parse_dt(conversation_payload.get("updated_at"), utcnow()) or utcnow()
+        remote_updated_at = (
+            _parse_dt(conversation_payload.get("updated_at"), utcnow()) or utcnow()
+        )
         if conversation is None:
             conversation = Conversation(
                 id=conversation_id,
@@ -889,10 +1023,16 @@ class DesktopAppService:
             session.add(conversation)
             session.flush()
         else:
-            conversation.title = str(conversation_payload.get("title") or conversation.title)
-            conversation.kind = str(conversation_payload.get("kind") or conversation.kind)
+            conversation.title = str(
+                conversation_payload.get("title") or conversation.title
+            )
+            conversation.kind = str(
+                conversation_payload.get("kind") or conversation.kind
+            )
             conversation.updated_at = remote_updated_at
-        next_participant_ids = {str(item) for item in conversation_payload.get("participant_ids") or []}
+        next_participant_ids = {
+            str(item) for item in conversation_payload.get("participant_ids") or []
+        }
         for peer_id in next_participant_ids:
             self._ensure_participant(session, conversation.id, str(peer_id))
         existing_participants = session.exec(
@@ -911,7 +1051,9 @@ class DesktopAppService:
         if peer is None:
             peer = Peer(
                 id=str(peer_payload["id"]),
-                display_name=str(peer_payload.get("display_name") or peer_payload["id"]),
+                display_name=str(
+                    peer_payload.get("display_name") or peer_payload["id"]
+                ),
                 backend_port=int(peer_payload.get("backend_port") or 0),
                 status=str(peer_payload.get("status") or "online"),
                 capabilities_json=json.dumps(peer_payload.get("capabilities") or {}),
@@ -920,8 +1062,12 @@ class DesktopAppService:
             )
             session.add(peer)
         else:
-            peer.display_name = str(peer_payload.get("display_name") or peer.display_name)
-            peer.backend_port = int(peer_payload.get("backend_port") or peer.backend_port)
+            peer.display_name = str(
+                peer_payload.get("display_name") or peer.display_name
+            )
+            peer.backend_port = int(
+                peer_payload.get("backend_port") or peer.backend_port
+            )
             peer.status = str(peer_payload.get("status") or peer.status)
             peer.capabilities_json = json.dumps(peer_payload.get("capabilities") or {})
             peer.last_seen_at = utcnow()
@@ -946,7 +1092,10 @@ class DesktopAppService:
                 self._apply_remote_conversation_deleted_event(
                     session,
                     {
-                        "payload": {"conversation_id": existing.id, "kind": existing.kind},
+                        "payload": {
+                            "conversation_id": existing.id,
+                            "kind": existing.kind,
+                        },
                         "conversation_id": existing.id,
                         "entity_id": existing.id,
                     },
@@ -963,22 +1112,42 @@ class DesktopAppService:
             scope="global",
         )
 
-    def _apply_remote_conversation_deleted_event(self, session: Session, event: dict[str, Any]):
+    def _apply_remote_conversation_deleted_event(
+        self, session: Session, event: dict[str, Any]
+    ):
         payload = dict(event.get("payload") or {})
-        conversation_id = str(payload.get("conversation_id") or event.get("conversation_id") or event.get("entity_id") or "")
+        conversation_id = str(
+            payload.get("conversation_id")
+            or event.get("conversation_id")
+            or event.get("entity_id")
+            or ""
+        )
         if not conversation_id:
             return
         conversation = session.get(Conversation, conversation_id)
         counterpart = None
-        conversation_kind = str(payload.get("kind") or (conversation.kind if conversation else ""))
+        conversation_kind = str(
+            payload.get("kind") or (conversation.kind if conversation else "")
+        )
         if conversation is not None and conversation.kind == "dm":
-            participant_ids = self._conversation_participant_ids(session, conversation_id)
-            counterpart = next((item for item in participant_ids if item != self.settings.instance_id), None)
+            participant_ids = self._conversation_participant_ids(
+                session, conversation_id
+            )
+            counterpart = next(
+                (item for item in participant_ids if item != self.settings.instance_id),
+                None,
+            )
         if conversation is not None:
-            messages = session.exec(select(Message).where(Message.conversation_id == conversation_id)).all()
+            messages = session.exec(
+                select(Message).where(Message.conversation_id == conversation_id)
+            ).all()
             for message in messages:
                 session.delete(message)
-            participants = session.exec(select(Participant).where(Participant.conversation_id == conversation_id)).all()
+            participants = session.exec(
+                select(Participant).where(
+                    Participant.conversation_id == conversation_id
+                )
+            ).all()
             for participant in participants:
                 session.delete(participant)
             session.delete(conversation)
@@ -998,8 +1167,13 @@ class DesktopAppService:
         payload = dict(event.get("payload", {}).get("message") or {})
         if not payload:
             return
-        existing_conversation = session.get(Conversation, str(payload["conversation_id"]))
-        participant_ids = {str(item) for item in payload.get("metadata", {}).get("participant_ids") or []}
+        existing_conversation = session.get(
+            Conversation, str(payload["conversation_id"])
+        )
+        participant_ids = {
+            str(item)
+            for item in payload.get("metadata", {}).get("participant_ids") or []
+        }
         if (
             existing_conversation is None
             and participant_ids
@@ -1008,24 +1182,35 @@ class DesktopAppService:
         ):
             return
         if existing_conversation is not None and existing_conversation.kind == "group":
-            participant_ids |= set(self._conversation_participant_ids(session, existing_conversation.id))
+            participant_ids |= set(
+                self._conversation_participant_ids(session, existing_conversation.id)
+            )
         conversation_payload = {
             "id": payload["conversation_id"],
-            "title": payload.get("metadata", {}).get("conversation_title") or self.default_conversation_title,
+            "title": payload.get("metadata", {}).get("conversation_title")
+            or self.default_conversation_title,
             "kind": payload.get("metadata", {}).get("conversation_kind") or "group",
             "participant_ids": sorted(participant_ids),
         }
-        conversation, _ = self._ensure_remote_conversation(session, conversation_payload)
+        conversation, _ = self._ensure_remote_conversation(
+            session, conversation_payload
+        )
         message = session.get(Message, payload["id"])
         remote_created_at = _parse_dt(payload.get("created_at"), utcnow()) or utcnow()
-        remote_updated_at = _parse_dt(payload.get("updated_at"), remote_created_at) or remote_created_at
+        remote_updated_at = (
+            _parse_dt(payload.get("updated_at"), remote_created_at) or remote_created_at
+        )
         if message is None:
             message = Message(
                 id=str(payload["id"]),
                 conversation_id=conversation.id,
                 sender_id=str(payload.get("sender_id") or "peer"),
                 sender_name=str(payload.get("sender_name") or "Peer"),
-                role="peer" if payload.get("role") == "user" else str(payload.get("role") or "peer"),
+                role=(
+                    "peer"
+                    if payload.get("role") == "user"
+                    else str(payload.get("role") or "peer")
+                ),
                 content=str(payload.get("content") or ""),
                 status=str(payload.get("status") or "sent"),
                 metadata_json=json.dumps(payload.get("metadata") or {}),
@@ -1036,7 +1221,11 @@ class DesktopAppService:
             session.flush()
         else:
             message.sender_name = str(payload.get("sender_name") or message.sender_name)
-            message.role = "peer" if payload.get("role") == "user" else str(payload.get("role") or message.role)
+            message.role = (
+                "peer"
+                if payload.get("role") == "user"
+                else str(payload.get("role") or message.role)
+            )
             message.content = str(payload.get("content") or message.content)
             message.status = str(payload.get("status") or message.status)
             message.metadata_json = json.dumps(payload.get("metadata") or {})
@@ -1071,7 +1260,9 @@ class DesktopAppService:
 
         conversation_payload = dict(event.get("payload", {}).get("conversation") or {})
         if conversation_payload:
-            conversation, created = self._ensure_remote_conversation(session, conversation_payload)
+            conversation, created = self._ensure_remote_conversation(
+                session, conversation_payload
+            )
             self._record_event(
                 session,
                 "conversation.created" if created else "conversation.updated",
@@ -1090,23 +1281,49 @@ class DesktopAppService:
                     target_peer_id=str(payload["target_peer_id"]),
                     status=str(payload.get("status") or "pending"),
                     conversation_id=payload.get("conversation_id"),
-                    created_at=datetime.fromisoformat(payload["created_at"]) if payload.get("created_at") else utcnow(),
-                    responded_at=datetime.fromisoformat(payload["responded_at"]) if payload.get("responded_at") else None,
-                    updated_at=datetime.fromisoformat(payload["updated_at"]) if payload.get("updated_at") else utcnow(),
+                    created_at=(
+                        datetime.fromisoformat(payload["created_at"])
+                        if payload.get("created_at")
+                        else utcnow()
+                    ),
+                    responded_at=(
+                        datetime.fromisoformat(payload["responded_at"])
+                        if payload.get("responded_at")
+                        else None
+                    ),
+                    updated_at=(
+                        datetime.fromisoformat(payload["updated_at"])
+                        if payload.get("updated_at")
+                        else utcnow()
+                    ),
                 )
                 session.add(request)
             else:
                 request.status = str(payload.get("status") or request.status)
                 request.conversation_id = payload.get("conversation_id")
-                request.responded_at = datetime.fromisoformat(payload["responded_at"]) if payload.get("responded_at") else request.responded_at
-                request.updated_at = datetime.fromisoformat(payload["updated_at"]) if payload.get("updated_at") else utcnow()
+                request.responded_at = (
+                    datetime.fromisoformat(payload["responded_at"])
+                    if payload.get("responded_at")
+                    else request.responded_at
+                )
+                request.updated_at = (
+                    datetime.fromisoformat(payload["updated_at"])
+                    if payload.get("updated_at")
+                    else utcnow()
+                )
             counterpart = (
                 request.target_peer_id
                 if request.requester_id == self.settings.instance_id
                 else request.requester_id
             )
-            relationship = "outbound_pending_dm" if request.requester_id == self.settings.instance_id else "inbound_pending_dm"
-            self._upsert_relationship(session, counterpart, relationship, request_id=request.id)
+            relationship = (
+                "outbound_pending_dm"
+                if request.requester_id == self.settings.instance_id
+                else "inbound_pending_dm"
+            )
+            self._upsert_relationship(
+                session, counterpart, relationship, request_id=request.id
+            )
             self._record_event(
                 session,
                 event["type"],
@@ -1129,7 +1346,9 @@ class DesktopAppService:
                     session,
                     counterpart,
                     "active_dm",
-                    conversation_id=str(conversation_payload.get("id") or request.conversation_id or ""),
+                    conversation_id=str(
+                        conversation_payload.get("id") or request.conversation_id or ""
+                    ),
                 )
             else:
                 self._upsert_relationship(session, counterpart, "none")
@@ -1144,7 +1363,9 @@ class DesktopAppService:
             scope="global",
         )
 
-    def _apply_remote_group_invitation_event(self, session: Session, event: dict[str, Any]):
+    def _apply_remote_group_invitation_event(
+        self, session: Session, event: dict[str, Any]
+    ):
         payload = dict(event.get("payload", {}).get("invitation") or {})
         if not payload:
             return
@@ -1165,22 +1386,43 @@ class DesktopAppService:
                     inviter_id=str(payload["inviter_id"]),
                     target_peer_id=str(payload["target_peer_id"]),
                     title=str(payload["title"]),
-                    participant_ids_json=json.dumps(payload.get("participant_ids") or [], ensure_ascii=False),
+                    participant_ids_json=json.dumps(
+                        payload.get("participant_ids") or [], ensure_ascii=False
+                    ),
                     status=str(payload.get("status") or "pending"),
-                    created_at=datetime.fromisoformat(payload["created_at"]) if payload.get("created_at") else utcnow(),
-                    responded_at=datetime.fromisoformat(payload["responded_at"]) if payload.get("responded_at") else None,
-                    updated_at=datetime.fromisoformat(payload["updated_at"]) if payload.get("updated_at") else utcnow(),
+                    created_at=(
+                        datetime.fromisoformat(payload["created_at"])
+                        if payload.get("created_at")
+                        else utcnow()
+                    ),
+                    responded_at=(
+                        datetime.fromisoformat(payload["responded_at"])
+                        if payload.get("responded_at")
+                        else None
+                    ),
+                    updated_at=(
+                        datetime.fromisoformat(payload["updated_at"])
+                        if payload.get("updated_at")
+                        else utcnow()
+                    ),
                 )
                 session.add(invitation)
             else:
                 invitation.status = str(payload.get("status") or invitation.status)
-                invitation.updated_at = datetime.fromisoformat(payload["updated_at"]) if payload.get("updated_at") else utcnow()
+                invitation.updated_at = (
+                    datetime.fromisoformat(payload["updated_at"])
+                    if payload.get("updated_at")
+                    else utcnow()
+                )
             self._record_event(
                 session,
                 "group.invited",
                 None,
                 invitation.id,
-                {"invitation": self._serialize_group_invitation(invitation), "conversation": conversation_payload or None},
+                {
+                    "invitation": self._serialize_group_invitation(invitation),
+                    "conversation": conversation_payload or None,
+                },
                 broadcast=False,
                 scope="global",
             )
@@ -1194,15 +1436,26 @@ class DesktopAppService:
             if existing is not None:
                 merged_payload["participant_ids"] = sorted(
                     set(self._conversation_participant_ids(session, existing.id))
-                    | {str(item) for item in conversation_payload.get("participant_ids") or []}
+                    | {
+                        str(item)
+                        for item in conversation_payload.get("participant_ids") or []
+                    }
                 )
-            merged_participants = {str(item) for item in merged_payload.get("participant_ids") or []}
-            if merged_participants and self.settings.instance_id not in merged_participants:
+            merged_participants = {
+                str(item) for item in merged_payload.get("participant_ids") or []
+            }
+            if (
+                merged_participants
+                and self.settings.instance_id not in merged_participants
+            ):
                 if existing is not None:
                     self._apply_remote_conversation_deleted_event(
                         session,
                         {
-                            "payload": {"conversation_id": existing.id, "kind": existing.kind},
+                            "payload": {
+                                "conversation_id": existing.id,
+                                "kind": existing.kind,
+                            },
                             "conversation_id": existing.id,
                             "entity_id": existing.id,
                         },
@@ -1212,12 +1465,17 @@ class DesktopAppService:
                     event["type"],
                     None,
                     invitation_id,
-                    {"invitation": payload, "conversation": conversation_payload or None},
+                    {
+                        "invitation": payload,
+                        "conversation": conversation_payload or None,
+                    },
                     broadcast=False,
                     scope="global",
                 )
                 return
-            conversation, created = self._ensure_remote_conversation(session, merged_payload)
+            conversation, created = self._ensure_remote_conversation(
+                session, merged_payload
+            )
             self._record_event(
                 session,
                 "conversation.created" if created else "conversation.updated",
@@ -1247,7 +1505,14 @@ class DesktopAppService:
         if message is None:
             return
         ack_status = str(payload.get("status") or "sent")
-        status_order = {"draft": 0, "queued": 1, "sent": 2, "delivered": 3, "read": 4, "failed": -1}
+        status_order = {
+            "draft": 0,
+            "queued": 1,
+            "sent": 2,
+            "delivered": 3,
+            "read": 4,
+            "failed": -1,
+        }
         if status_order.get(ack_status, 0) >= status_order.get(message.status, 0):
             message.status = ack_status
             message.updated_at = utcnow()
@@ -1287,7 +1552,9 @@ class DesktopAppService:
             return
         with session_scope(self.engine) as session:
             for event in events:
-                self.transport_event_cursor = max(self.transport_event_cursor, int(event["id"]))
+                self.transport_event_cursor = max(
+                    self.transport_event_cursor, int(event["id"])
+                )
                 if str(event.get("entity_id")) == self.settings.instance_id:
                     continue
                 event_type = str(event.get("type") or "")
@@ -1301,9 +1568,17 @@ class DesktopAppService:
                     self._apply_remote_dm_request_event(session, event)
                 elif event_type.startswith("group."):
                     self._apply_remote_group_invitation_event(session, event)
-                elif event_type.startswith("message.") and event_type != "message.token":
-                    payload_message = dict(event.get("payload", {}).get("message") or {})
-                    if payload_message and str(payload_message.get("sender_id") or "") == self.settings.instance_id:
+                elif (
+                    event_type.startswith("message.") and event_type != "message.token"
+                ):
+                    payload_message = dict(
+                        event.get("payload", {}).get("message") or {}
+                    )
+                    if (
+                        payload_message
+                        and str(payload_message.get("sender_id") or "")
+                        == self.settings.instance_id
+                    ):
                         continue
                     if event_type in {"message.ack", "message.read"}:
                         self._apply_remote_message_ack_event(session, event)
@@ -1318,7 +1593,13 @@ class DesktopAppService:
                         )
                     else:
                         self._apply_remote_message_event(session, event)
-                elif event_type in {"job.route", "job.started", "job.completed", "job.failed", "route.planned"}:
+                elif event_type in {
+                    "job.route",
+                    "job.started",
+                    "job.completed",
+                    "job.failed",
+                    "route.planned",
+                }:
                     self._record_event(
                         session,
                         event_type,
@@ -1359,18 +1640,30 @@ class DesktopAppService:
             if conversation is None:
                 return None
 
-            sender_id = self.settings.instance_id if role != "assistant" else "assistant"
-            sender_name = self.settings.instance_name if role in {"user", "peer"} else "AI"
+            sender_id = (
+                self.settings.instance_id if role != "assistant" else "assistant"
+            )
+            sender_name = (
+                self.settings.instance_name if role in {"user", "peer"} else "AI"
+            )
             metadata_dict = {
                 "conversation_title": conversation.title,
                 "conversation_kind": conversation.kind,
-                "participant_ids": self._conversation_summary_participant_ids(session, conversation),
+                "participant_ids": self._conversation_summary_participant_ids(
+                    session, conversation
+                ),
                 "local_draft": local_draft,
             }
             if metadata:
                 metadata_dict.update(metadata)
-            status = "queued" if role == "user" else (
-                "pending" if role == "assistant" and local_draft else ("completed" if role == "assistant" else "sent")
+            status = (
+                "queued"
+                if role == "user"
+                else (
+                    "pending"
+                    if role == "assistant" and local_draft
+                    else ("completed" if role == "assistant" else "sent")
+                )
             )
             message = Message(
                 conversation_id=conversation_id,
@@ -1404,7 +1697,11 @@ class DesktopAppService:
                     "conversation.updated",
                     conversation_id,
                     conversation_id,
-                    {"conversation": self._serialize_conversation(session, conversation)},
+                    {
+                        "conversation": self._serialize_conversation(
+                            session, conversation
+                        )
+                    },
                     scope="global",
                 )
             return self._serialize_message(message)
@@ -1519,7 +1816,9 @@ class DesktopAppService:
                     assistant.id,
                     {"message": self._serialize_message(assistant)},
                 )
-            assistant_metadata = json.loads(assistant.metadata_json or "{}") if assistant else {}
+            assistant_metadata = (
+                json.loads(assistant.metadata_json or "{}") if assistant else {}
+            )
             broadcast_job_events = assistant_metadata.get("local_draft") is not True
 
             job = InferenceJob(
@@ -1540,7 +1839,11 @@ class DesktopAppService:
                     "conversation.updated",
                     conversation_id,
                     conversation_id,
-                    {"conversation": self._serialize_conversation(session, conversation)},
+                    {
+                        "conversation": self._serialize_conversation(
+                            session, conversation
+                        )
+                    },
                     broadcast=True,
                     scope="global",
                 )
@@ -1561,15 +1864,23 @@ class DesktopAppService:
                 counterpart = next(
                     (
                         peer_id
-                        for peer_id in self._conversation_participant_ids(session, conversation_id)
+                        for peer_id in self._conversation_participant_ids(
+                            session, conversation_id
+                        )
                         if peer_id != self.settings.instance_id
                     ),
                     None,
                 )
-                messages = session.exec(select(Message).where(Message.conversation_id == conversation_id)).all()
+                messages = session.exec(
+                    select(Message).where(Message.conversation_id == conversation_id)
+                ).all()
                 for message in messages:
                     session.delete(message)
-                participants = session.exec(select(Participant).where(Participant.conversation_id == conversation_id)).all()
+                participants = session.exec(
+                    select(Participant).where(
+                        Participant.conversation_id == conversation_id
+                    )
+                ).all()
                 for participant in participants:
                     session.delete(participant)
                 session.delete(conversation)
@@ -1607,7 +1918,9 @@ class DesktopAppService:
                 )
                 return payload
             conversation.updated_at = utcnow()
-            payload = {"conversation": self._serialize_conversation(session, conversation)}
+            payload = {
+                "conversation": self._serialize_conversation(session, conversation)
+            }
             self._record_event(
                 session,
                 "conversation.updated",
@@ -1632,7 +1945,10 @@ class DesktopAppService:
         if source_message_id:
             with session_scope(self.engine) as session:
                 source_message = session.get(Message, source_message_id)
-                if source_message is None or source_message.conversation_id != conversation_id:
+                if (
+                    source_message is None
+                    or source_message.conversation_id != conversation_id
+                ):
                     return None
                 draft_metadata["source_message_id"] = source_message.id
                 if not resolved_prompt:
@@ -1718,8 +2034,16 @@ class DesktopAppService:
                 {"message": self._serialize_message(assistant)},
                 broadcast=broadcast_job_events,
             )
-            user_message = session.get(Message, job.user_message_id) if job.user_message_id else None
-            prompt = job.prompt if job.prompt else (user_message.content if user_message else "")
+            user_message = (
+                session.get(Message, job.user_message_id)
+                if job.user_message_id
+                else None
+            )
+            prompt = (
+                job.prompt
+                if job.prompt
+                else (user_message.content if user_message else "")
+            )
 
         try:
             # stream_tokens yields full cumulative text each step (matches InferenceEngine.generate_stream).
@@ -1731,8 +2055,12 @@ class DesktopAppService:
                     if job.status == "cancelled":
                         assistant = session.get(Message, job.assistant_message_id)
                         if assistant:
-                            assistant_metadata = json.loads(assistant.metadata_json or "{}")
-                            broadcast_job_events = assistant_metadata.get("local_draft") is not True
+                            assistant_metadata = json.loads(
+                                assistant.metadata_json or "{}"
+                            )
+                            broadcast_job_events = (
+                                assistant_metadata.get("local_draft") is not True
+                            )
                             assistant.status = "cancelled"
                             assistant.updated_at = utcnow()
                             self._record_event(
@@ -1761,7 +2089,9 @@ class DesktopAppService:
                     if assistant is None:
                         return
                     assistant_metadata = json.loads(assistant.metadata_json or "{}")
-                    broadcast_job_events = assistant_metadata.get("local_draft") is not True
+                    broadcast_job_events = (
+                        assistant_metadata.get("local_draft") is not True
+                    )
                     assistant.content = cumulative_text
                     assistant.status = "streaming"
                     assistant.updated_at = utcnow()
@@ -1820,10 +2150,14 @@ class DesktopAppService:
                 assistant = session.get(Message, job.assistant_message_id)
                 if assistant is not None:
                     assistant_metadata = json.loads(assistant.metadata_json or "{}")
-                    broadcast_job_events = assistant_metadata.get("local_draft") is not True
+                    broadcast_job_events = (
+                        assistant_metadata.get("local_draft") is not True
+                    )
                     assistant.status = "failed"
                     assistant.updated_at = utcnow()
-                    assistant.metadata_json = json.dumps({"error": str(exc)}, ensure_ascii=False)
+                    assistant.metadata_json = json.dumps(
+                        {"error": str(exc)}, ensure_ascii=False
+                    )
                     self._record_event(
                         session,
                         "message.updated",
@@ -1858,7 +2192,11 @@ class DesktopAppService:
             job.status = "cancelled"
             job.finished_at = utcnow()
             assistant = session.get(Message, job.assistant_message_id)
-            assistant_metadata = json.loads(assistant.metadata_json or "{}") if assistant is not None else {}
+            assistant_metadata = (
+                json.loads(assistant.metadata_json or "{}")
+                if assistant is not None
+                else {}
+            )
             broadcast_job_events = assistant_metadata.get("local_draft") is not True
             self._record_event(
                 session,
@@ -1889,7 +2227,14 @@ class DesktopAppService:
             metadata.setdefault("acks", {})[self.settings.instance_id] = status
             message.metadata_json = json.dumps(metadata, ensure_ascii=False)
             if message.role in {"user", "assistant"}:
-                status_order = {"draft": 0, "queued": 1, "sent": 2, "delivered": 3, "read": 4, "failed": -1}
+                status_order = {
+                    "draft": 0,
+                    "queued": 1,
+                    "sent": 2,
+                    "delivered": 3,
+                    "read": 4,
+                    "failed": -1,
+                }
                 if status_order.get(status, 0) >= status_order.get(message.status, 0):
                     message.status = status
             message.updated_at = utcnow()
@@ -1927,7 +2272,9 @@ class DesktopAppService:
     def list_sync_events(self, after: int = 0, limit: int | None = None):
         self.process_transport_events()
         with session_scope(self.engine) as session:
-            statement = select(EventLog).where(EventLog.id > after).order_by(EventLog.id)
+            statement = (
+                select(EventLog).where(EventLog.id > after).order_by(EventLog.id)
+            )
             if limit:
                 statement = statement.limit(limit)
             rows = session.exec(statement).all()

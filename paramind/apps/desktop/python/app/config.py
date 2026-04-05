@@ -32,14 +32,14 @@ def _default_data_dir() -> Path:
     return Path.home() / ".paramind-desktop"
 
 
-def build_settings(
-    test_mode: bool = False, overrides: dict | None = None
-) -> Settings:
+def build_settings(test_mode: bool = False, overrides: dict | None = None) -> Settings:
     overrides = overrides or {}
     base_app_data_dir = Path(overrides.get("app_data_dir") or _default_data_dir())
     base_app_data_dir.mkdir(parents=True, exist_ok=True)
 
-    backend_port = int(overrides.get("backend_port") or os.environ.get("PARAMIND_BACKEND_PORT", "5001"))
+    backend_port = int(
+        overrides.get("backend_port") or os.environ.get("PARAMIND_BACKEND_PORT", "5001")
+    )
     instance_id = str(
         overrides.get("instance_id")
         or os.environ.get("PARAMIND_INSTANCE_ID")
@@ -69,14 +69,8 @@ def build_settings(
         overrides.get("model_id")
         or os.environ.get("PARAMIND_MODEL", "Qwen/Qwen2.5-0.5B-Instruct")
     )
-    family = str(
-        overrides.get("family")
-        or os.environ.get("PARAMIND_FAMILY", "qwen")
-    )
-    device = str(
-        overrides.get("device")
-        or os.environ.get("PARAMIND_DEVICE", "cpu")
-    )
+    family = str(overrides.get("family") or os.environ.get("PARAMIND_FAMILY", "qwen"))
+    device = str(overrides.get("device") or os.environ.get("PARAMIND_DEVICE", "cpu"))
     transport = str(
         overrides.get("transport")
         or os.environ.get("PARAMIND_TRANSPORT")

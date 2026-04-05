@@ -94,7 +94,9 @@ class CoordinatorState:
     ) -> dict[str, Any]:
         return self._append_event(event_type, entity_id, payload, conversation_id)
 
-    def list_events(self, after: int = 0, limit: Optional[int] = None) -> list[dict[str, Any]]:
+    def list_events(
+        self, after: int = 0, limit: Optional[int] = None
+    ) -> list[dict[str, Any]]:
         with self._lock:
             events = [event for event in self._events if event["id"] > after]
         if limit is not None:
@@ -148,7 +150,9 @@ def create_coordinator_app(state: CoordinatorState | None = None) -> FastAPI:
         event_type = str(payload.get("type") or "").strip()
         entity_id = str(payload.get("entity_id") or "").strip()
         if not event_type or not entity_id:
-            raise HTTPException(status_code=400, detail="type and entity_id are required")
+            raise HTTPException(
+                status_code=400, detail="type and entity_id are required"
+            )
         return state.publish_event(
             event_type=event_type,
             entity_id=entity_id,
@@ -164,7 +168,9 @@ def create_coordinator_app(state: CoordinatorState | None = None) -> FastAPI:
         try:
             while True:
                 try:
-                    message = await asyncio.wait_for(websocket.receive_json(), timeout=0.1)
+                    message = await asyncio.wait_for(
+                        websocket.receive_json(), timeout=0.1
+                    )
                 except asyncio.TimeoutError:
                     message = None
                 except WebSocketDisconnect:
@@ -178,12 +184,16 @@ def create_coordinator_app(state: CoordinatorState | None = None) -> FastAPI:
                         await websocket.send_json({"type": "peer.joined", "peer": peer})
                     elif action == "heartbeat":
                         peer = state.heartbeat_peer(payload)
-                        await websocket.send_json({"type": "peer.updated", "peer": peer})
+                        await websocket.send_json(
+                            {"type": "peer.updated", "peer": peer}
+                        )
                     elif action == "leave":
                         peer_id = str(payload.get("id") or "").strip()
                         peer = state.leave_peer(peer_id)
                         if peer is not None:
-                            await websocket.send_json({"type": "peer.left", "peer": peer})
+                            await websocket.send_json(
+                                {"type": "peer.left", "peer": peer}
+                            )
                     elif action == "publish":
                         event = state.publish_event(
                             event_type=str(payload.get("event_type") or "").strip(),
@@ -193,9 +203,13 @@ def create_coordinator_app(state: CoordinatorState | None = None) -> FastAPI:
                         )
                         await websocket.send_json(event)
                     elif action == "snapshot":
-                        await websocket.send_json({"type": "snapshot", **state.snapshot()})
+                        await websocket.send_json(
+                            {"type": "snapshot", **state.snapshot()}
+                        )
                     else:
-                        await websocket.send_json({"type": "error", "error": f"Unknown action: {action}"})
+                        await websocket.send_json(
+                            {"type": "error", "error": f"Unknown action: {action}"}
+                        )
 
                 events = state.list_events(after=last_seen)
                 for event in events:

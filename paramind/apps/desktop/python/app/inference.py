@@ -23,7 +23,10 @@ class InferenceRunner:
             if self._engine is not None or self._engine_error is not None:
                 return self._engine
 
-            if self.settings.test_mode or os.environ.get("PARAMIND_FORCE_MOCK_AI", "0") == "1":
+            if (
+                self.settings.test_mode
+                or os.environ.get("PARAMIND_FORCE_MOCK_AI", "0") == "1"
+            ):
                 self._engine_error = RuntimeError("mock inference requested")
                 return None
 
@@ -48,7 +51,8 @@ class InferenceRunner:
         engine = await asyncio.to_thread(self._load_engine)
         if engine is None:
             if self._engine_error is not None and not (
-                self.settings.test_mode or os.environ.get("PARAMIND_FORCE_MOCK_AI", "0") == "1"
+                self.settings.test_mode
+                or os.environ.get("PARAMIND_FORCE_MOCK_AI", "0") == "1"
             ):
                 raise self._engine_error
             async for cumulative_text in self._mock_stream(prompt):

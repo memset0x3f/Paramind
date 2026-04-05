@@ -13,7 +13,9 @@ from .models import Peer, utcnow
 class MockP2PAdapter:
     def __init__(self, settings, transport: Any | None = None):
         self.settings = settings
-        self.transport = transport if transport is not None else self._build_transport(settings)
+        self.transport = (
+            transport if transport is not None else self._build_transport(settings)
+        )
 
     def _build_transport(self, settings):
         if getattr(settings, "transport", "mock-local") != "localhost-coordinator":
@@ -33,7 +35,9 @@ class MockP2PAdapter:
             "backend_port": peer.backend_port,
             "status": peer.status,
             "capabilities": json.loads(peer.capabilities_json or "{}"),
-            "last_seen_at": peer.last_seen_at.isoformat() if peer.last_seen_at else None,
+            "last_seen_at": (
+                peer.last_seen_at.isoformat() if peer.last_seen_at else None
+            ),
         }
 
     def _serialize_local_peer(self, session: Session) -> dict[str, Any]:
@@ -52,7 +56,9 @@ class MockP2PAdapter:
 
     def _capabilities(self) -> dict[str, Any]:
         return {
-            "transport": "localhost-coordinator" if self.transport is not None else "local-db",
+            "transport": (
+                "localhost-coordinator" if self.transport is not None else "local-db"
+            ),
             "model_id": self.settings.model_id,
             "family": self.settings.family,
             "device": self.settings.device,
@@ -160,7 +166,9 @@ class MockP2PAdapter:
         if not peers:
             peers = [session.get(Peer, self.settings.instance_id)]
         peers = [peer for peer in peers if peer is not None]
-        peers = sorted(peers, key=lambda peer: (peer.id != self.settings.instance_id, peer.id))
+        peers = sorted(
+            peers, key=lambda peer: (peer.id != self.settings.instance_id, peer.id)
+        )
         selected = peers[: min(3, len(peers))]
         total_layers = 24
         base = total_layers // max(len(selected), 1)
@@ -190,7 +198,13 @@ class MockP2PAdapter:
 
         return route
 
-    def publish_event(self, event_type: str, entity_id: str, payload: dict[str, Any], conversation_id: str | None = None):
+    def publish_event(
+        self,
+        event_type: str,
+        entity_id: str,
+        payload: dict[str, Any],
+        conversation_id: str | None = None,
+    ):
         if self.transport is None:
             return None
         event = {

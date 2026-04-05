@@ -21,7 +21,11 @@ def init_db(engine):
     event_log_columns = {column["name"] for column in inspector.get_columns("eventlog")}
     if "scope" not in event_log_columns:
         with engine.begin() as connection:
-            connection.execute(text("ALTER TABLE eventlog ADD COLUMN scope VARCHAR DEFAULT 'conversation'"))
+            connection.execute(
+                text(
+                    "ALTER TABLE eventlog ADD COLUMN scope VARCHAR DEFAULT 'conversation'"
+                )
+            )
             connection.execute(
                 text(
                     "UPDATE eventlog "

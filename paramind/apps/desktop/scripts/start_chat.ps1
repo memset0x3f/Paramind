@@ -13,6 +13,10 @@ $BackendPortB = if ($env:PARAMIND_BACKEND_PORT_B) { $env:PARAMIND_BACKEND_PORT_B
 $BaseDataDir = if ($env:PARAMIND_APP_DATA_DIR) { $env:PARAMIND_APP_DATA_DIR } else { Join-Path $RootDir '.paramind-local' }
 
 New-Item -ItemType Directory -Force -Path $BaseDataDir | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $BaseDataDir 'peer-a') | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $BaseDataDir 'peer-b') | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $BaseDataDir 'electron\\peer-a') | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $BaseDataDir 'electron\\peer-b') | Out-Null
 
 function Stop-PortProcess {
     param([string]$Port)
@@ -50,6 +54,7 @@ function Start-ElectronInstance {
         "set PARAMIND_BACKEND_PORT=$BackendPort",
         "set PARAMIND_APP_DATA_DIR=$BaseDataDir",
         "set PARAMIND_INSTANCE_DATA_DIR=$InstanceDataDir",
+        "set PARAMIND_ELECTRON_USER_DATA_DIR=$(Join-Path $BaseDataDir ('electron\\' + $InstanceId))",
         'npm.cmd start'
     ) -join ' && '
 

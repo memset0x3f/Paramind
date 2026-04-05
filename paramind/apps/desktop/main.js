@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain } = require('electron/main')
 const { spawn } = require('child_process')
 const crypto = require('crypto')
+const fs = require('fs')
 const net = require('net')
 const path = require('path')
 const { resolveDesktopRuntimePaths } = require('./runtime_paths')
@@ -8,6 +9,17 @@ const { resolveDesktopRuntimePaths } = require('./runtime_paths')
 let pythonProcess = null
 let coordinatorProcess = null
 let backendConfig = null
+const initialRuntimePaths = resolveDesktopRuntimePaths({
+  isPackaged: app.isPackaged,
+  appDir: __dirname,
+  resourcesPath: process.resourcesPath,
+  env: process.env,
+  platform: process.platform,
+})
+
+fs.mkdirSync(initialRuntimePaths.electronUserDataDir, { recursive: true })
+fs.mkdirSync(initialRuntimePaths.instanceDataDir, { recursive: true })
+app.setPath('userData', initialRuntimePaths.electronUserDataDir)
 
 function findAvailablePort(startPort = 5001, endPort = 5100) {
   return new Promise((resolve, reject) => {
@@ -40,13 +52,14 @@ async function startBackend() {
   const pythonScript = runtimePaths.pythonScript
 
   const port = parseInt(process.env.PARAMIND_BACKEND_PORT || '', 10) || await findAvailablePort()
-  const instanceId = process.env.PARAMIND_INSTANCE_ID || `peer-${crypto.randomUUID().slice(0, 8)}`
+  const instanceId = runtimePaths.instanceId || process.env.PARAMIND_INSTANCE_ID || `peer-${crypto.randomUUID().slice(0, 8)}`
   const instanceName = process.env.PARAMIND_INSTANCE_NAME || `Local Node ${port}`
-  const baseAppDataDir = process.env.PARAMIND_APP_DATA_DIR || app.getPath('userData')
-  const instanceDataDir =
-    process.env.PARAMIND_INSTANCE_DATA_DIR ||
-    path.join(baseAppDataDir, 'instances', instanceId)
+  const baseAppDataDir = runtimePaths.baseAppDataDir || process.env.PARAMIND_APP_DATA_DIR || app.getPath('userData')
+  const instanceDataDir = runtimePaths.instanceDataDir || process.env.PARAMIND_INSTANCE_DATA_DIR || path.join(baseAppDataDir, 'instances', instanceId)
   const coordinatorPort = process.env.PARAMIND_COORDINATOR_PORT || '9010'
+
+  fs.mkdirSync(baseAppDataDir, { recursive: true })
+  fs.mkdirSync(instanceDataDir, { recursive: true })
 
   await ensureCoordinator(runtimePaths, Number(coordinatorPort))
 

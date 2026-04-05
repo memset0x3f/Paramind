@@ -61,7 +61,10 @@ test('resolveDesktopRuntimePaths prefers python.exe for packaged windows runtime
     isPackaged: true,
     appDir: desktopDir,
     resourcesPath: resourcesRoot,
-    env: {},
+    env: {
+      PARAMIND_INSTANCE_ID: 'peer-a',
+      PARAMIND_APP_DATA_DIR: 'C:\\ParaMind\\appdata',
+    },
     platform: 'win32',
     existsSync: (candidate) => candidate.endsWith('python-dist\\bin\\python.exe'),
   })
@@ -72,6 +75,10 @@ test('resolveDesktopRuntimePaths prefers python.exe for packaged windows runtime
     path.win32.join(resourcesRoot, 'python-dist', 'bin', 'python.exe')
   )
   assert.deepEqual(runtime.pythonArgs, [])
+  assert.equal(runtime.instanceId, 'peer-a')
+  assert.equal(runtime.baseAppDataDir, path.win32.join('C:\\ParaMind\\appdata'))
+  assert.equal(runtime.instanceDataDir, path.win32.join('C:\\ParaMind\\appdata', 'instances', 'peer-a'))
+  assert.equal(runtime.electronUserDataDir, path.win32.join('C:\\ParaMind\\appdata', 'electron', 'peer-a'))
 })
 
 test('desktop package.json packages python runtime resources and no venv directory', () => {
@@ -96,5 +103,7 @@ test('desktop ships an experimental Windows multi-instance start script', () => 
 
   assert.match(scriptSource, /Get-NetTCPConnection/)
   assert.match(scriptSource, /npm\.cmd start/)
+  assert.match(scriptSource, /PARAMIND_ELECTRON_USER_DATA_DIR/)
+  assert.match(scriptSource, /electron\\\\peer-a/)
   assert.match(scriptSource, /experimental/i)
 })

@@ -4,6 +4,7 @@ import io
 import torch
 import json
 import time
+import uuid
 
 from common.Constants import UDP_CHUNK_SIZE
 
@@ -58,19 +59,37 @@ def createUdpSocket(port: int = 0):
     return s
 
 
-def sendTorchData(sock, data, uuid, targetAddr, input=True):
+def sendTorchData(sock, data, sender_uuid, targetAddr, input=True, stream_id=None):
+    """
+    Send PyTorch tensor data over UDP with chunking.
+
+    Args:
+        sock: UDP socket
+        data: PyTorch tensor to send
+        sender_uuid: Sender UUID
+        targetAddr: Target (ip, port) tuple
+        input: True for torchInput, False for torchOutput
+
+    Returns:
+        Dict with stream_id and packets for resend capability
+    """
     buffer = io.BytesIO()
     torch.save(data, buffer)
     serialized_data = buffer.getvalue()
     packet_type = "torchInput" if input else "torchOutput"
+    if stream_id is None:
+        stream_id = str(uuid.uuid4())
     chunkSize = UDP_CHUNK_SIZE - 256
     nChunk = (len(serialized_data) - 1) // chunkSize + 1
+
+    packets = []  # [(chunkId, packet_bytes), ...]
 
     for i in range(0, len(serialized_data), chunkSize):
         chunk = serialized_data[i : i + chunkSize]
         header = {
             "type": packet_type,
-            "uuid": str(uuid),
+            "uuid": str(sender_uuid),
+            "streamId": stream_id,
             "chunkId": i // chunkSize,
             "nChunk": nChunk,
         }
@@ -81,8 +100,11 @@ def sendTorchData(sock, data, uuid, targetAddr, input=True):
             + header_bytes
             + chunk
         )
+        packets.append((i // chunkSize, packet))
         sock.sendto(packet, targetAddr)
         time.sleep(0.01)
+
+    return {"stream_id": stream_id, "packets": packets, "stream_type": packet_type}
 
 
 def deserializeTorchData(serialized_data: bytes):

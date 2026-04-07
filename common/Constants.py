@@ -1,1 +1,3 @@
 UDP_CHUNK_SIZE = 4096
+TORCH_CHUNK_TIMEOUT = 5.0  # 秒，无接收chunk的超时时间
+TORCH_CHUNK_MAX_RETRIES = 3  # 最多重试次数

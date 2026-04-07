@@ -14,16 +14,9 @@ from transformers import AutoTokenizer
 from common import RuntimeException, PeerInfo
 from common import createUdpSocket, findFreePort, getLocalIP
 from common import FunctionRegistry
-from common.Constants import (
-    UDP_CHUNK_SIZE,
-    TORCH_CHUNK_TIMEOUT,
-    TORCH_CHUNK_MAX_RETRIES,
-)
-from common.Utils import (
-    sendTorchData,
-    deserializeTorchData,
-    TORCH_PACKET_MAGIC,
-)
+from common.Constants import UDP_CHUNK_SIZE
+from common.Utils import TORCH_PACKET_MAGIC
+from p2p.PeerSocket import PeerSocket
 from inference import QwenSlice
 
 logger = logging.getLogger(__name__)
@@ -43,24 +36,22 @@ class P2PClient:
         self.signalServerWsThread = None
         self.isConnectedToSignalServer = False
         self.peerInfo = {}
-        self.torchDataBuffer = (
-            {}
-        )  # bufferKey -> {"chunks": [...], "received_count": 0, "received_at": timestamp, "nChunk": int}
-        self._pendingTorchSends = (
-            {}
-        )  # bufferKey -> {"packets": [...], "target_addr": ..., "retries": 0}
-        self._torchDataBufferLock = threading.Lock()
-        self._pendingTorchSendsLock = threading.Lock()
         self.udpPort = findFreePort()
         _, externalIP, externalPort = self._queryStunInfo(self.udpPort)
-        self.peerSocket = createUdpSocket(self.udpPort)
-        assert self.peerSocket.getsockname()[1] == self.udpPort
+        raw_peer_socket = createUdpSocket(self.udpPort)
+        assert raw_peer_socket.getsockname()[1] == self.udpPort
 
         # Get real local IP instead of 0.0.0.0
         internalIP = getLocalIP()
-        internalPort = self.peerSocket.getsockname()[1]
+        internalPort = raw_peer_socket.getsockname()[1]
         self.info = PeerInfo(
             externalIP, externalPort, uuid.uuid4(), False, internalIP, internalPort
+        )
+        self.peerSocket = PeerSocket(
+            raw_peer_socket,
+            local_uuid=str(self.info.uuid),
+            peer_lookup=lambda peer_uuid: self.peerInfo.get(peer_uuid),
+            logger=logger,
         )
 
         self.recvThread = threading.Thread(target=self.recvPeerMessage, daemon=True)
@@ -109,39 +100,31 @@ class P2PClient:
     def recvPeerMessage(self):
         while True:
             data, addr = self.peerSocket.recvfrom(UDP_CHUNK_SIZE)
-            jsonData = None
             if data.startswith(TORCH_PACKET_MAGIC):
-                if len(data) < 8:
-                    logger.warning(f"Received malformed torch packet from {addr}")
+                jsonData = self._decodeTorchPacket(data)
+                if jsonData is None:
                     continue
-                header_len = int.from_bytes(data[4:8], byteorder="big")
-                header_end = 8 + header_len
-                if len(data) < header_end:
-                    logger.warning(f"Received incomplete torch header from {addr}")
+                jsonData["_source_addr"] = addr
+                logger.info(f"Received UDP message from {addr}: {jsonData['type']}")
+                complete = self.peerSocket.handle_torch_datagram(jsonData)
+                if complete is None:
                     continue
-                try:
-                    header = json.loads(data[8:header_end].decode("utf-8"))
-                except json.JSONDecodeError:
-                    logger.warning(f"Received invalid torch header from {addr}")
-                    continue
-                jsonData = {
-                    "type": header["type"],
-                    "uuid": header["uuid"],
-                    "streamId": header.get("streamId"),
-                    "chunkId": header["chunkId"],
-                    "nChunk": header["nChunk"],
-                    "obj": data[header_end:],
-                }
-            else:
-                try:
-                    jsonData = json.loads(data.decode())
-                except (UnicodeDecodeError, json.JSONDecodeError):
-                    logger.warning(f"Received non-JSON UDP message from {addr}: {data}")
-                    continue
+                complete["_source_addr"] = addr
+                if self._peerHandlers.get(complete["type"]):
+                    self._peerHandlers[complete["type"]](self, complete)
+                continue
 
-            # Track the source address for endpoint selection
+            try:
+                jsonData = json.loads(data.decode())
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                logger.warning(f"Received non-JSON UDP message from {addr}: {data}")
+                continue
+
             jsonData["_source_addr"] = addr
             logger.info(f"Received UDP message from {addr}: {jsonData['type']}")
+            if jsonData["type"] == "nackRequest":
+                self.peerSocket.handle_nack_request(jsonData)
+                continue
             if self._peerHandlers.get(jsonData["type"]):
                 self._peerHandlers[jsonData["type"]](self, jsonData)
 
@@ -199,46 +182,46 @@ class P2PClient:
         self.kvCache = None
         response = ""
         with torch.no_grad():
-            for step in range(50):
+            step = 0
+            while step < 50:
                 hidden_states, self.kvCache = self.model.forward(
                     input, past_key_values=self.kvCache
                 )
                 peer = list(self.peerInfo.values())[0]
                 active_addr = peer.get_active_address()
-                print(
-                    f"Step {step}, Hidden States Shape: {hidden_states.shape}. Sending to peer {active_addr[0]}:{active_addr[1]}..."
-                )
-                packets = sendTorchData(
-                    self.peerSocket,
+                # print(
+                #     f"Step {step}, Hidden States Shape: {hidden_states.shape}. Sending to peer {active_addr[0]}:{active_addr[1]}..."
+                # )
+                self.peerSocket.send_to_peer(
                     hidden_states.cpu(),
-                    self.info.uuid,
-                    active_addr,
+                    str(peer.uuid),
                     input=True,
                 )
-                # Store for potential retransmission
-                bufferKey = f"{peer.uuid}:torchInput:{packets['stream_id']}"
-                with self._pendingTorchSendsLock:
-                    self._pendingTorchSends[bufferKey] = {
-                        "packets": packets["packets"],
-                        "target_addr": active_addr,
-                        "retries": 0,
-                    }
 
                 next_token_id = self.tokenQueue.get()  # LongTensor [1, 1]
-                # === 发送给 Client (用于显示) ===
-                # send_data(node1, next_token_id, client_addr)
-                word = self.tokenizer.decode([next_token_id.item()])
+                # next_token_id 可能是标量或tensor，需要统一处理
+                if not torch.is_tensor(next_token_id):
+                    next_token_id = torch.tensor([[next_token_id]], dtype=torch.long)
+                elif next_token_id.dim() == 0:
+                    next_token_id = next_token_id.unsqueeze(0).unsqueeze(0)
+
+                # 提取标量值用于解码和EOS检查
+                token_value = next_token_id.squeeze().item()
+                word = self.tokenizer.decode([token_value])
                 response += word
-                # === 准备下一轮 ===
-                next_token_id = next_token_id.to(self.device)
+                print(word, end="", flush=True)  # 流式输出到屏幕
 
                 # 检查是否是结束符 (EOS)
-                if next_token_id.item() in [151643, 151645]:  # Qwen EOS tokens
-                    print("Generated EOS.")
+                eos_token_id = self.tokenizer.eos_token_id
+                if token_value == eos_token_id:
+                    print("\nGenerated EOS.")
                     break
 
-                input = next_token_id  # Decode 阶段的输入
-        print(f"Response: {response}")
+                # 准备下一轮输入：确保next_token_id是[1, 1]形状且在正确的device上
+                next_token_id = next_token_id.to(self.device)
+                input = next_token_id
+                step += 1
+        # print(f"Response: {response}")
 
     def _sendHolePunchMsg(self, targetPeer: PeerInfo):
         logger.info(
@@ -254,12 +237,12 @@ class P2PClient:
         while self.peerInfo[str(targetPeer.uuid)].isConnected is False:
             # Send UDP packet to both public and internal addresses
             if targetPeer.public_ip and targetPeer.public_port:
-                self.peerSocket.sendto(
+                self.peerSocket.send(
                     punchMsg,
                     (targetPeer.public_ip, targetPeer.public_port),
                 )
             if targetPeer.internal_ip and targetPeer.internal_port:
-                self.peerSocket.sendto(
+                self.peerSocket.send(
                     punchMsg,
                     (targetPeer.internal_ip, targetPeer.internal_port),
                 )
@@ -334,16 +317,14 @@ class P2PClient:
 
         # Send punchSuccess back to the address where punch came from
         if source_addr:
-            self.peerSocket.sendto(successMsg, source_addr)
+            self.peerSocket.send(successMsg, source_addr)
             logger.info(f"Sent punchSuccess to {source_addr}")
         else:
             # Fallback: try both endpoints
             if peer.public_ip and peer.public_port:
-                self.peerSocket.sendto(successMsg, (peer.public_ip, peer.public_port))
+                self.peerSocket.send(successMsg, (peer.public_ip, peer.public_port))
             if peer.internal_ip and peer.internal_port:
-                self.peerSocket.sendto(
-                    successMsg, (peer.internal_ip, peer.internal_port)
-                )
+                self.peerSocket.send(successMsg, (peer.internal_ip, peer.internal_port))
 
     @_peerHandlers.register("punchSuccess")
     def _handlePeerPunchSuccess(self, data):
@@ -377,9 +358,7 @@ class P2PClient:
     @_peerHandlers.register("torchInput")
     def _handlePeerTorchInput(self, data):
         peerUuid = data["uuid"]
-        tensorData = self._recvTorchData(data)
-        if tensorData is None:
-            return
+        tensorData = data["tensor"]
         logger.info(f"Received torch data from peer {peerUuid}")
 
         tensorData = tensorData.to(self.device)
@@ -395,29 +374,15 @@ class P2PClient:
                 0
             )  # [1, 1]
 
-        peer = self.peerInfo[peerUuid]
-        active_addr = peer.get_active_address()
-        packets = sendTorchData(
-            self.peerSocket,
+        self.peerSocket.send_to_peer(
             next_token_id.cpu(),
-            self.info.uuid,
-            active_addr,
+            peerUuid,
             input=False,
         )
-        # Store for potential retransmission
-        bufferKey = f"{peerUuid}:torchOutput:{packets['stream_id']}"
-        with self._pendingTorchSendsLock:
-            self._pendingTorchSends[bufferKey] = {
-                "packets": packets["packets"],
-                "target_addr": active_addr,
-                "retries": 0,
-            }
 
     @_peerHandlers.register("torchOutput")
     def _handlePeerTorchOutput(self, data):
-        tensorData = self._recvTorchData(data)
-        if tensorData is None:
-            return
+        tensorData = data["tensor"]
         logger.info(f"Received torch output from peer {data['uuid']}: {tensorData}")
         self.tokenQueue.put(tensorData)
 
@@ -441,205 +406,31 @@ class P2PClient:
         if self._signalServerHandlers.get(data["type"]):
             self._signalServerHandlers[data["type"]](self, data)
 
-    def _recvTorchData(self, data):
-        """
-        Receive and reassemble torch data chunks with timeout detection.
-        Returns deserialized tensor if all chunks received, None otherwise.
-        """
-        nChunk = data["nChunk"]
-        uuid = str(data["uuid"])
-        streamType = data["type"]
-        streamId = data.get("streamId") or "legacy"
-        bufferKey = f"{uuid}:{streamType}:{streamId}"
-        chunkId = data["chunkId"]
+    def _decodeTorchPacket(self, data: bytes):
+        if len(data) < 8:
+            logger.warning("Received malformed torch packet")
+            return None
 
-        start_timeout_checker = False
-        fullBytes = None
-
-        with self._torchDataBufferLock:
-            # Initialize buffer for this stream if needed
-            if bufferKey not in self.torchDataBuffer:
-                self.torchDataBuffer[bufferKey] = {
-                    "chunks": [None] * nChunk,
-                    "received_count": 0,
-                    "received_at": time.time(),
-                    "nChunk": nChunk,
-                    "src_uuid": uuid,
-                    "stream_type": streamType,
-                    "stream_id": streamId,
-                    "nack_count": 0,
-                }
-                start_timeout_checker = True
-
-            buffer = self.torchDataBuffer[bufferKey]
-
-            # Store chunk if not already received
-            if buffer["chunks"][chunkId] is None:
-                buffer["chunks"][chunkId] = data["obj"]
-                buffer["received_count"] += 1
-                buffer["received_at"] = time.time()  # Reset timeout on each chunk
-
-            # Check if all chunks received
-            if buffer["received_count"] == nChunk:
-                fullBytes = b"".join(buffer["chunks"])
-                del self.torchDataBuffer[bufferKey]
-
-        if start_timeout_checker and fullBytes is None:
-            # Start timeout checker outside the lock.
-            self._startTorchStreamTimeout(bufferKey)
-
-        if fullBytes is not None:
-            tensorData = deserializeTorchData(fullBytes)
-            logger.info(f"Torch stream {bufferKey} fully received and reconstructed")
-            return tensorData
-
-        return None
-
-    def _startTorchStreamTimeout(self, bufferKey: str):
-        """
-        Start a timeout checker for torch data stream reassembly.
-        Sends repeated NACKs every TORCH_CHUNK_TIMEOUT if chunks are still missing,
-        up to TORCH_CHUNK_MAX_RETRIES.
-        """
-
-        def timeout_checker():
-            while True:
-                time.sleep(TORCH_CHUNK_TIMEOUT)
-                send_nack_payload = None
-                drop_stream = False
-
-                with self._torchDataBufferLock:
-                    if bufferKey not in self.torchDataBuffer:
-                        # Stream already completed or dropped.
-                        return
-
-                    buffer = self.torchDataBuffer[bufferKey]
-                    if buffer["received_count"] == buffer["nChunk"]:
-                        return
-
-                    # Wait one full timeout window since the last incoming chunk.
-                    if time.time() - buffer["received_at"] < TORCH_CHUNK_TIMEOUT:
-                        continue
-
-                    if buffer["nack_count"] >= TORCH_CHUNK_MAX_RETRIES:
-                        drop_stream = True
-                    else:
-                        missing_chunks = [
-                            i
-                            for i, chunk in enumerate(buffer["chunks"])
-                            if chunk is None
-                        ]
-                        if missing_chunks:
-                            buffer["nack_count"] += 1
-                            send_nack_payload = {
-                                "src_uuid": buffer["src_uuid"],
-                                "stream_type": buffer["stream_type"],
-                                "stream_id": buffer["stream_id"],
-                                "missing_chunks": missing_chunks,
-                                "nack_count": buffer["nack_count"],
-                            }
-
-                    if drop_stream:
-                        logger.error(
-                            f"Torch stream {bufferKey} exceeded receiver retries ({TORCH_CHUNK_MAX_RETRIES}). Dropping incomplete stream."
-                        )
-                        del self.torchDataBuffer[bufferKey]
-                        return
-
-                if send_nack_payload is None:
-                    continue
-
-                logger.warning(
-                    f"Torch stream {bufferKey} timeout. Missing chunks: {send_nack_payload['missing_chunks']}. Sending NACK round {send_nack_payload['nack_count']}/{TORCH_CHUNK_MAX_RETRIES}."
-                )
-                self._sendNackRequest(
-                    send_nack_payload["src_uuid"],
-                    send_nack_payload["stream_type"],
-                    send_nack_payload["stream_id"],
-                    send_nack_payload["missing_chunks"],
-                )
-
-        thread = threading.Thread(target=timeout_checker, daemon=True)
-        thread.start()
-
-    def _sendNackRequest(
-        self,
-        src_uuid: str,
-        stream_type: str,
-        stream_id: str,
-        missing_chunks: list,
-    ):
-        """
-        Send NACK (Negative Acknowledgement) via UDP to request retransmission of missing chunks.
-        """
-        if src_uuid not in self.peerInfo:
-            logger.error(f"Unknown peer {src_uuid}, cannot send NACK")
-            return
-
-        peer = self.peerInfo[src_uuid]
-        target_addr = peer.get_active_address()
-
-        nack_msg = {
-            "type": "nackRequest",
-            "requester_uuid": str(self.info.uuid),
-            "stream_type": stream_type,
-            "stream_id": stream_id,
-            "missing_chunks": missing_chunks,
-        }
+        header_len = int.from_bytes(data[4:8], byteorder="big")
+        header_end = 8 + header_len
+        if len(data) < header_end:
+            logger.warning("Received incomplete torch header")
+            return None
 
         try:
-            self.peerSocket.sendto(json.dumps(nack_msg).encode(), target_addr)
-            logger.info(
-                f"Sent NACK for {len(missing_chunks)} missing chunks in {stream_type} to {target_addr}"
-            )
-        except Exception as e:
-            logger.error(f"Failed to send NACK: {e}")
+            header = json.loads(data[8:header_end].decode("utf-8"))
+        except json.JSONDecodeError:
+            logger.warning("Received invalid torch header")
+            return None
 
-    @_peerHandlers.register("nackRequest")
-    def _handleNackRequest(self, data):
-        """
-        Handle NACK request from receiver and retransmit missing chunks.
-        """
-        requester_uuid = data.get("requester_uuid")
-        stream_type = data.get("stream_type")
-        stream_id = data.get("stream_id")
-        missing_chunks = data.get("missing_chunks", [])
-
-        if requester_uuid is None or stream_type is None or stream_id is None:
-            logger.warning(f"Malformed NACK payload: {data}")
-            return
-
-        bufferKey = f"{requester_uuid}:{stream_type}:{stream_id}"
-
-        with self._pendingTorchSendsLock:
-            if bufferKey not in self._pendingTorchSends:
-                logger.warning(f"Received NACK for unknown stream {bufferKey}")
-                return
-
-            send_info = self._pendingTorchSends[bufferKey]
-            send_info["retries"] += 1
-
-            if send_info["retries"] > TORCH_CHUNK_MAX_RETRIES:
-                logger.error(
-                    f"Torch stream {bufferKey} exceeded max retries ({TORCH_CHUNK_MAX_RETRIES}). Giving up."
-                )
-                del self._pendingTorchSends[bufferKey]
-                return
-
-            retry_count = send_info["retries"]
-            target_addr = send_info["target_addr"]
-            packets = send_info["packets"]
-
-        # Retransmit missing chunks outside lock.
-        logger.info(
-            f"Retransmitting {len(missing_chunks)} chunks for {bufferKey} (retry {retry_count})"
-        )
-
-        for chunkId in missing_chunks:
-            if isinstance(chunkId, int) and 0 <= chunkId < len(packets):
-                _, packet_bytes = packets[chunkId]
-                self.peerSocket.sendto(packet_bytes, target_addr)
-                time.sleep(0.01)
+        return {
+            "type": header["type"],
+            "uuid": header["uuid"],
+            "streamId": header.get("streamId"),
+            "chunkId": header["chunkId"],
+            "nChunk": header["nChunk"],
+            "obj": data[header_end:],
+        }
 
     @staticmethod
     def _queryStunInfo(port):

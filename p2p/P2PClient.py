@@ -29,6 +29,7 @@ class P2PConnectionError(RuntimeException):
 class P2PClient:
     _signalServerHandlers = FunctionRegistry()
     _peerHandlers = FunctionRegistry()
+    _TORCH_INPUT_QUEUE_SIZE = 64
 
     def __init__(self, signalServer: str, modelLayer: tuple[int, int]):
         self.signalServerAddr = signalServer
@@ -54,9 +55,6 @@ class P2PClient:
             logger=logger,
         )
 
-        self.recvThread = threading.Thread(target=self.recvPeerMessage, daemon=True)
-        self.recvThread.start()
-
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.modelPath = snapshot_download("Qwen/Qwen2.5-0.5B-Instruct")
         self.model = QwenSlice(
@@ -67,6 +65,16 @@ class P2PClient:
             self.modelPath, trust_remote_code=True
         )
         self.tokenQueue = queue.Queue()
+        self.torchInputQueue = queue.Queue(maxsize=self._TORCH_INPUT_QUEUE_SIZE)
+
+        self.torchInputWorkerThread = threading.Thread(
+            target=self._processTorchInput,
+            daemon=True,
+        )
+        self.torchInputWorkerThread.start()
+
+        self.recvThread = threading.Thread(target=self.recvPeerMessage, daemon=True)
+        self.recvThread.start()
 
     def connect(self):
         try:
@@ -110,8 +118,7 @@ class P2PClient:
                 if complete is None:
                     continue
                 complete["_source_addr"] = addr
-                if self._peerHandlers.get(complete["type"]):
-                    self._peerHandlers[complete["type"]](self, complete)
+                self._dispatchPeerHandler(complete)
                 continue
 
             try:
@@ -125,8 +132,35 @@ class P2PClient:
             if jsonData["type"] == "nackRequest":
                 self.peerSocket.handle_nack_request(jsonData)
                 continue
-            if self._peerHandlers.get(jsonData["type"]):
-                self._peerHandlers[jsonData["type"]](self, jsonData)
+            self._dispatchPeerHandler(jsonData)
+
+    def _dispatchPeerHandler(self, message):
+        handler = self._peerHandlers.get(message["type"])
+        if handler is None:
+            return
+
+        if message["type"] == "torchInput":
+            try:
+                self.torchInputQueue.put_nowait(message)
+            except queue.Full:
+                logger.warning(
+                    "torchInput queue is full (size=%s), dropping message from peer %s",
+                    self._TORCH_INPUT_QUEUE_SIZE,
+                    message.get("uuid"),
+                )
+            return
+
+        handler(self, message)
+
+    def _processTorchInput(self):
+        while True:
+            message = self.torchInputQueue.get()
+            try:
+                self._handlePeerTorchInput(message)
+            except Exception:
+                logger.exception("Failed to process torchInput message")
+            finally:
+                self.torchInputQueue.task_done()
 
     def registerToGroup(self, groupId: str):
         if not self.isConnectedToSignalServer:

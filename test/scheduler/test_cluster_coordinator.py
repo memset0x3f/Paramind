@@ -58,6 +58,34 @@ def test_coordinator_broadcasts_plan_after_collecting_profiles():
     assert transport.sent[0][1]["coordinator_id"] == plan.coordinator_id
 
 
+def test_coordinator_broadcast_plan_includes_route_and_shard_owner_index():
+    transport = FakeTransport()
+    coordinator = ClusterCoordinator(
+        transport=transport,
+        model_id="Qwen/Qwen2.5-0.5B-Instruct",
+        total_layers=24,
+    )
+
+    profiles = [
+        NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28, 28),
+        NodeProfile("node-b", "10.0.0.2", "cpu", 32, 24, 24),
+    ]
+    plan = coordinator.build_plan(profiles)
+
+    coordinator.broadcast_plan(plan)
+
+    payload = transport.sent[-1][1]
+    ordered = sorted(plan.assignments, key=lambda assignment: assignment.start_layer)
+    expected_route = [assignment.node_id for assignment in ordered]
+    expected_owner_index = {
+        f"{assignment.start_layer}-{assignment.end_layer}": assignment.node_id
+        for assignment in ordered
+    }
+
+    assert payload["route"] == expected_route
+    assert payload["shard_owner_index"] == expected_owner_index
+
+
 def test_coordinator_build_plan_accepts_profile_payloads():
     coordinator = ClusterCoordinator(
         transport=FakeTransport(),
@@ -139,6 +167,42 @@ def test_transport_driven_cluster_plan_marks_ready():
     assert coordinator.all_ready(plan) is True
     assert coordinator.wait_for_ready(plan, timeout_seconds=0.1) is True
     assert transport.sent[0][0] == "cluster_plan"
+
+
+def test_node_runtime_persists_global_shard_route_and_owner_index_from_plan():
+    transport = FakeTransport()
+    coordinator = ClusterCoordinator(
+        transport=transport,
+        model_id="Qwen/Qwen2.5-0.5B-Instruct",
+        total_layers=24,
+    )
+    runtime = NodeRuntime(
+        node_id="node-b",
+        family=ModelFamily.QWEN,
+        total_layers=24,
+        loader=FakeLoader(),
+    )
+    runtime.attach_transport(transport)
+
+    plan = coordinator.build_plan(
+        [
+            NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28, 28),
+            NodeProfile("node-b", "10.0.0.2", "cpu", 32, 24, 24),
+        ]
+    )
+    coordinator.broadcast_plan(plan)
+
+    snapshot = runtime.debug_snapshot()
+    ordered = sorted(plan.assignments, key=lambda assignment: assignment.start_layer)
+    expected_route = [assignment.node_id for assignment in ordered]
+    expected_owner_index = {
+        f"{assignment.start_layer}-{assignment.end_layer}": assignment.node_id
+        for assignment in ordered
+    }
+
+    assert len(snapshot["global_assignments"]) == len(plan.assignments)
+    assert snapshot["route"] == expected_route
+    assert snapshot["shard_owner_index"] == expected_owner_index
 
 
 def test_multi_runtime_static_cluster_smoke():

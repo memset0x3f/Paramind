@@ -29,6 +29,9 @@ class NodeRuntime:
         self.assignment: ShardAssignment | None = None
         self.local_shard = None
         self.registry = ShardRegistry()
+        self.global_assignments: list[ShardAssignment] = []
+        self.route: list[str] = []
+        self.shard_owner_index: dict[str, str] = {}
 
     def attach_transport(
         self, transport, on_ready: Optional[Callable[[str], Any]] = None
@@ -62,7 +65,43 @@ class NodeRuntime:
                 )
         return None
 
+    def _extract_global_assignments(self, payload: dict) -> list[ShardAssignment]:
+        assignments: list[ShardAssignment] = []
+        for item in payload.get("assignments", []):
+            assignments.append(
+                ShardAssignment(
+                    node_id=item["node_id"],
+                    start_layer=item["start_layer"],
+                    end_layer=item["end_layer"],
+                    role=item.get("role", "middle"),
+                    source_node_id=item.get("source_node_id"),
+                )
+            )
+        return assignments
+
+    def _derive_route_and_owner_index(self) -> tuple[list[str], dict[str, str]]:
+        ordered = sorted(
+            self.global_assignments,
+            key=lambda assignment: assignment.start_layer,
+        )
+        route = [assignment.node_id for assignment in ordered]
+        owner_index = {
+            f"{assignment.start_layer}-{assignment.end_layer}": assignment.node_id
+            for assignment in ordered
+        }
+        return route, owner_index
+
     def handle_cluster_plan(self, payload: dict):
+        self.global_assignments = self._extract_global_assignments(payload)
+        fallback_route, fallback_owner_index = self._derive_route_and_owner_index()
+        self.route = list(payload.get("route") or fallback_route)
+        raw_owner_index = payload.get("shard_owner_index")
+        self.shard_owner_index = (
+            {str(key): str(value) for key, value in raw_owner_index.items()}
+            if isinstance(raw_owner_index, dict)
+            else fallback_owner_index
+        )
+
         assignment = self._select_assignment(payload)
         if assignment is None:
             return None
@@ -311,6 +350,18 @@ class NodeRuntime:
         return {
             "node_id": self.node_id,
             "assignment": assignment,
+            "global_assignments": [
+                {
+                    "node_id": item.node_id,
+                    "start_layer": item.start_layer,
+                    "end_layer": item.end_layer,
+                    "role": item.role,
+                    "source_node_id": item.source_node_id,
+                }
+                for item in self.global_assignments
+            ],
+            "route": list(self.route),
+            "shard_owner_index": dict(self.shard_owner_index),
             "shards": shards,
             "has_local_shard": self.local_shard is not None,
         }

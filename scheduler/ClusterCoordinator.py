@@ -120,12 +120,22 @@ class ClusterCoordinator:
     def broadcast_plan(self, plan: PlacementPlan):
         if self.transport is None:
             raise RuntimeError("No transport configured for cluster broadcasts")
+        ordered_assignments = sorted(
+            plan.assignments, key=lambda assignment: assignment.start_layer
+        )
+        route = [assignment.node_id for assignment in ordered_assignments]
+        shard_owner_index = {
+            f"{assignment.start_layer}-{assignment.end_layer}": assignment.node_id
+            for assignment in ordered_assignments
+        }
         self.transport.broadcast(
             "cluster_plan",
             {
                 "model_id": plan.model_id,
                 "coordinator_id": plan.coordinator_id,
                 "assignments": [asdict(a) for a in plan.assignments],
+                "route": route,
+                "shard_owner_index": shard_owner_index,
             },
         )
 

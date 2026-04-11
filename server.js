@@ -117,7 +117,7 @@ class P2PSignalingServer {
         const { groupId } = clientInfo;
         const groupClients = this.groups.get(groupId);
         
-        if (!groupClients || groupClients.size <= 1) {
+        if (!groupClients) {
             return;
         }
 

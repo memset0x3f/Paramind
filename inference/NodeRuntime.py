@@ -6,52 +6,96 @@ from typing import Any, Callable, Optional
 from scheduler.ClusterTypes import NodeReconfigurationAction, ShardAssignment
 from .ShardConfig import ModelFamily, ShardConfig
 from .ShardRegistry import ShardRecord, ShardRegistry
-from .ShardLoader import ShardLoader
+from .ShardLoader import ShardLoader, ModelShard
+
+from p2p import P2PClient
+from common.Utils import getSignalServerAddr
+import uuid
+import torch
+import queue
+import threading
+import logging
+from transformers import AutoTokenizer
+
+logger = logging.getLogger("paramind.NodeRuntime")
 
 
 class NodeRuntime:
     def __init__(
         self,
-        node_id: str,
+        node_id: uuid.UUID,
+        node_group: str,
         family: ModelFamily,
         total_layers: int,
+        model_id: str,
+        shard_assignment: ShardAssignment | None = None,
         device: str = "cpu",
         loader=None,
         on_ready: Optional[Callable[[str], Any]] = None,
     ):
-        self.node_id = node_id
+        self.node_id = str(node_id)
+        self.node_group = node_group
         self.family = family
         self.total_layers = total_layers
         self.device = device
         self.loader = loader
         self.on_ready = on_ready
-        self.transport = None
-        self.assignment: ShardAssignment | None = None
-        self.local_shard = None
+        self.p2p_client = P2PClient(getSignalServerAddr(), client_uuid=node_id)
+        self.assignment = shard_assignment
+        self.local_shard: Optional[ModelShard] = None
+        self.kvCache: Optional[torch.Tensor] = None
+        self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+        if shard_assignment is not None:
+            self.apply_assignment(model_id=model_id, assignment=shard_assignment)
         self.registry = ShardRegistry()
         self.global_assignments: list[ShardAssignment] = []
         self.route: list[str] = []
         self.shard_owner_index: dict[str, str] = {}
 
-    def attach_transport(
-        self, transport, on_ready: Optional[Callable[[str], Any]] = None
-    ):
-        self.transport = transport
-        if on_ready is not None:
-            self.on_ready = on_ready
+        self.token_queue = queue.Queue()
+        self.torch_input_worker_thread = threading.Thread(
+            target=self.local_inference_worker, daemon=True
+        )
+        self.torch_input_worker_thread.start()
 
-        if hasattr(transport, "register_handler"):
-            transport.register_handler("cluster_plan", self.handle_cluster_plan)
-            transport.register_handler(
-                "cluster_reconfigure", self.handle_reconfiguration_plan
-            )
-            transport.register_handler(
-                "cluster_reconfigure_prepare", self.handle_reconfiguration_prepare
-            )
-            transport.register_handler(
-                "cluster_reconfigure_commit", self.handle_reconfiguration_commit
-            )
-        return transport
+        self.inference_results = {}
+        self.eos_ids = set(self.tokenizer.all_special_ids)
+
+    def _register_handlers(self):
+        self.p2p_client.register_handler("cluster_plan", self.handle_cluster_plan)
+        self.p2p_client.register_handler(
+            "reconfiguration_prepare", self.handle_reconfiguration_prepare
+        )
+        self.p2p_client.register_handler(
+            "reconfiguration_commit", self.handle_reconfiguration_commit
+        )
+        self.p2p_client.register_handler("torchInput", self.handle_torch_input)
+        self.p2p_client.register_handler("torchOutput", self.handle_torch_output)
+
+    def run(self):
+        self._register_handlers()
+        self.p2p_client.connect()
+        self.p2p_client.registerToGroup(self.node_group)
+        self.p2p_client.waitForAllPeerConnection()
+
+    def distributedInfer(self, prompt: str):
+        if self.local_shard is None:
+            raise RuntimeError("Local shard is not loaded for inference")
+
+        input_ids = self.tokenizer(prompt, return_tensors="pt").input_ids.to(
+            self.device
+        )
+        stard_node_id = self.node_id
+        inference_id = self.node_id + "-" + str(int(time.time() * 1000))
+        inference_path = self.route
+        self.p2p_client.sendTensorToPeer(
+            tensor=input_ids,
+            peer_uuid=inference_path[0],
+            inference_path=inference_path,
+            inference_id=inference_id,
+            start_node_id=stard_node_id,
+            input=True,
+        )
 
     def _select_assignment(self, payload: dict) -> ShardAssignment | None:
         for item in payload.get("assignments", []):
@@ -90,6 +134,93 @@ class NodeRuntime:
             for assignment in ordered
         }
         return route, owner_index
+
+    def handle_torch_input(self, data: dict):
+        data["input"] = True
+        self.token_queue.put(data)
+
+    def handle_torch_output(self, data: dict):
+        data["input"] = False
+        self.token_queue.put(data)
+
+    @torch.no_grad()
+    def local_inference_worker(self):
+        while True:
+            data = self.token_queue.get()
+            assert (
+                self.local_shard is not None
+            ), "Local shard is not loaded to handle input"
+
+            inference_path = data["inference_path"]
+            inference_id = data["inference_id"]
+            start_node_id = data["start_node_id"]
+            tensorData = data["tensor"].to(self.device)
+            is_input = data["input"]
+            # TODO: Check route and inference path consistency
+
+            logger.debug(
+                f"Handling tensor for inference_id={inference_id}, input={is_input}, tensor_shape={tensorData.shape}, inference_path={inference_path}"
+            )
+            if is_input:
+                logits, self.kvCache = self.local_shard.forward(
+                    tensorData, past_key_values=self.kvCache
+                )
+                cur_hop = inference_path.index(self.node_id)
+                if cur_hop < len(inference_path) - 1:
+                    next_node_id = inference_path[cur_hop + 1]
+                    self.p2p_client.sendTensorToPeer(
+                        tensor=logits.cpu(),
+                        peer_uuid=next_node_id,
+                        inference_path=inference_path,
+                        inference_id=inference_id,
+                        start_node_id=start_node_id,
+                        input=True,
+                    )
+                    continue
+                else:
+                    # Output to start node
+                    self.p2p_client.sendTensorToPeer(
+                        tensor=logits.cpu(),
+                        peer_uuid=start_node_id,
+                        inference_path=inference_path,
+                        inference_id=inference_id,
+                        start_node_id=start_node_id,
+                        input=False,
+                    )
+            else:
+                logits = tensorData[:, -1, :]
+                next_id = torch.argmax(logits, dim=-1).reshape(1, 1)
+                token_id = next_id.item()
+                if inference_id not in self.inference_results:
+                    self.inference_results[inference_id] = ([], False)
+                self.inference_results[inference_id][0].append(token_id)
+                print(
+                    self.tokenizer.decode(
+                        [token_id],
+                        skip_special_tokens=True,
+                        clean_up_tokenization_spaces=False,
+                    ),
+                    end="",
+                    flush=True,
+                )
+                if token_id in self.eos_ids:
+                    self.inference_results[inference_id] = (
+                        self.tokenizer.decode(
+                            self.inference_results[inference_id][0],
+                            skip_special_tokens=True,
+                            clean_up_tokenization_spaces=False,
+                        ),
+                        True,
+                    )
+                    continue
+                self.p2p_client.sendTensorToPeer(
+                    tensor=next_id.cpu(),
+                    peer_uuid=inference_path[0],
+                    inference_path=inference_path,
+                    inference_id=inference_id,
+                    start_node_id=start_node_id,
+                    input=True,
+                )
 
     def handle_cluster_plan(self, payload: dict):
         self.global_assignments = self._extract_global_assignments(payload)

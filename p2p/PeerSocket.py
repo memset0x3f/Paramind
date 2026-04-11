@@ -5,6 +5,7 @@ import logging
 import queue
 import threading
 import time
+import uuid
 from typing import Callable, Optional, Protocol
 
 import torch
@@ -46,41 +47,53 @@ class PeerSocket:
         self._pendingTorchSendsLock = threading.Lock()
         self._completedMessages = queue.Queue()
 
-    def send(self, data, target_addr, *, peer_uuid=None, input=True, stream_id=None):
-        if torch.is_tensor(data):
-            result = sendTorchData(
-                self.sock,
-                data,
-                sender_uuid=self.local_uuid,
-                targetAddr=target_addr,
-                input=input,
-                stream_id=stream_id,
-            )
-            self._remember_pending_send(
-                peer_uuid=peer_uuid,
-                stream_type=result["stream_type"],
-                stream_id=result["stream_id"],
-                packets=result["packets"],
-                target_addr=target_addr,
-            )
-            return result
-
+    def send(self, data, target_addr):
         return self.sock.sendto(data, target_addr)
 
-    def send_to_peer(self, data, peer_uuid: str, *, input=True, stream_id=None):
+    def sendTensor(
+        self,
+        tensor: torch.Tensor,
+        peer_uuid: str,
+        *,
+        inference_path,
+        inference_id,
+        start_node_id,
+        input,
+        stream_id=None,
+    ):
+        if stream_id is None:
+            stream_id = str(uuid.uuid4())
+        peer = self._resolve_peer(peer_uuid)
+        if peer is None:
+            raise ValueError(f"Unknown peer {peer_uuid}")
+        result = sendTorchData(
+            self.sock,
+            tensor,
+            sender_uuid=self.local_uuid,
+            targetAddr=peer.get_active_address(),
+            inference_path=inference_path,
+            inference_id=inference_id,
+            start_node_id=start_node_id,
+            input=input,
+            stream_id=stream_id,
+        )
+        self._remember_pending_send(
+            peer_uuid=peer_uuid,
+            stream_type=result["stream_type"],
+            stream_id=result["stream_id"],
+            packets=result["packets"],
+            target_addr=peer.get_active_address(),
+        )
+        return result
+
+    def send_to_peer(self, data, peer_uuid: str):
         peer = self._resolve_peer(peer_uuid)
         if peer is None:
             raise ValueError(f"Unknown peer {peer_uuid}")
         target_addr = peer.get_active_address()
         if not target_addr or target_addr[0] is None or target_addr[1] is None:
             raise ValueError(f"Peer {peer_uuid} does not have an active address")
-        return self.send(
-            data,
-            target_addr,
-            peer_uuid=peer_uuid,
-            input=input,
-            stream_id=stream_id,
-        )
+        return self.send(data, target_addr)
 
     def recv(self, timeout: Optional[float] = None):
         return self._completedMessages.get(timeout=timeout)
@@ -95,6 +108,9 @@ class PeerSocket:
         stream_id = data.get("streamId") or "legacy"
         buffer_key = f"{sender_uuid}:{stream_type}:{stream_id}"
         chunk_id = data["chunkId"]
+        inference_path = data["inference_path"]
+        inference_id = data["inference_id"]
+        start_node_id = data["start_node_id"]
 
         start_timeout_checker = False
         full_bytes = None
@@ -134,6 +150,9 @@ class PeerSocket:
             "type": stream_type,
             "uuid": sender_uuid,
             "streamId": stream_id,
+            "inference_path": inference_path,
+            "inference_id": inference_id,
+            "start_node_id": start_node_id,
             "tensor": tensor,
         }
         self._completedMessages.put(message)

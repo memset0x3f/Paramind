@@ -5,11 +5,20 @@ import torch
 import json
 import time
 import uuid
+import os
+import logging
 
 from common.Constants import UDP_CHUNK_SIZE
 
-
+logger = logging.getLogger("paramind.Utils")
 TORCH_PACKET_MAGIC = b"PMB1"
+
+
+def getSignalServerAddr():
+    signalServer = os.environ["PARAMIND_SIGSERVER"]
+    if not signalServer:
+        raise RuntimeError("Environment variable PARAMIND_SIGSERVER not set.")
+    return signalServer
 
 
 def getLocalIP():
@@ -59,7 +68,17 @@ def createUdpSocket(port: int = 0):
     return s
 
 
-def sendTorchData(sock, data, sender_uuid, targetAddr, input=True, stream_id=None):
+def sendTorchData(
+    sock,
+    data,
+    sender_uuid,
+    targetAddr,
+    inference_path,
+    inference_id,
+    start_node_id,
+    input=True,
+    stream_id=None,
+):
     """
     Send PyTorch tensor data over UDP with chunking.
 
@@ -68,6 +87,9 @@ def sendTorchData(sock, data, sender_uuid, targetAddr, input=True, stream_id=Non
         data: PyTorch tensor to send
         sender_uuid: Sender UUID
         targetAddr: Target (ip, port) tuple
+        inference_path: Path for inference
+        inference_id: ID for inference
+        start_node_id: ID of the starting node
         input: True for torchInput, False for torchOutput
 
     Returns:
@@ -89,6 +111,9 @@ def sendTorchData(sock, data, sender_uuid, targetAddr, input=True, stream_id=Non
         header = {
             "type": packet_type,
             "uuid": str(sender_uuid),
+            "inference_path": inference_path,
+            "inference_id": inference_id,
+            "start_node_id": start_node_id,
             "streamId": stream_id,
             "chunkId": i // chunkSize,
             "nChunk": nChunk,
@@ -102,9 +127,38 @@ def sendTorchData(sock, data, sender_uuid, targetAddr, input=True, stream_id=Non
         )
         packets.append((i // chunkSize, packet))
         sock.sendto(packet, targetAddr)
-        time.sleep(0.01)
+        time.sleep(0.001)
 
     return {"stream_id": stream_id, "packets": packets, "stream_type": packet_type}
+
+
+def decodeTorchPacket(data: bytes):
+    if len(data) < 8:
+        return None
+
+    header_len = int.from_bytes(data[4:8], byteorder="big")
+    header_end = 8 + header_len
+    if len(data) < header_end:
+        return None
+
+    try:
+        header = json.loads(data[8:header_end].decode("utf-8"))
+    except json.JSONDecodeError:
+        return None
+
+    # convert header into a dict and append the rest of data as 'obj'
+
+    return {
+        "type": header["type"],
+        "uuid": header["uuid"],
+        "streamId": header.get("streamId"),
+        "inference_path": header.get("inference_path"),
+        "inference_id": header.get("inference_id"),
+        "start_node_id": header.get("start_node_id"),
+        "chunkId": header["chunkId"],
+        "nChunk": header["nChunk"],
+        "obj": data[header_end:],
+    }
 
 
 def deserializeTorchData(serialized_data: bytes):

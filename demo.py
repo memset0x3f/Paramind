@@ -32,7 +32,7 @@ def main() -> int:
     parser.add_argument("--node-index", type=int, choices=[1, 2], required=True)
     parser.add_argument("--group", default="demo-group")
     parser.add_argument("--model-id", default="Qwen/Qwen2.5-0.5B-Instruct")
-    parser.add_argument("--prompt", default="hello")
+    parser.add_argument("--prompt", default="用一句话介绍你自己")
     parser.add_argument(
         "--device", default="cuda" if torch.cuda.is_available() else "cpu"
     )
@@ -94,7 +94,7 @@ def main() -> int:
             time.sleep(1)
         peer_ids = sorted(runtime.p2p_client.peerInfo.keys())
 
-        runtime.route = [runtime.node_id, peer_ids[0]]
+        runtime.route = [runtime.node_id, peer_ids[1 - peer_ids.index(runtime.node_id)]]
 
         # Current NodeRuntime loop can continue generation for many rounds;
         # broaden EOS ids so cooperation test converges quickly.

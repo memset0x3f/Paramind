@@ -43,7 +43,7 @@ class NodeRuntime:
         self.p2p_client = P2PClient(getSignalServerAddr(), client_uuid=node_id)
         self.assignment = shard_assignment
         self.local_shard: Optional[ModelShard] = None
-        self.kvCache: Optional[torch.Tensor] = None
+        self.kvCache: dict[str, Any] = {}
         self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
         if shard_assignment is not None:
             self.apply_assignment(model_id=model_id, assignment=shard_assignment)
@@ -60,6 +60,8 @@ class NodeRuntime:
 
         self.inference_results = {}
         self.eos_ids = set(self.tokenizer.all_special_ids)
+        if self.tokenizer.eos_token_id is not None:
+            self.eos_ids.add(self.tokenizer.eos_token_id)
 
     def _register_handlers(self):
         self.p2p_client.register_handler("cluster_plan", self.handle_cluster_plan)
@@ -82,9 +84,13 @@ class NodeRuntime:
         if self.local_shard is None:
             raise RuntimeError("Local shard is not loaded for inference")
 
-        input_ids = self.tokenizer(prompt, return_tensors="pt").input_ids.to(
-            self.device
+        messages = [
+            {"role": "user", "content": prompt},
+        ]
+        text = self.tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
         )
+        input_ids = self.tokenizer(text, return_tensors="pt").input_ids.to(self.device)
         stard_node_id = self.node_id
         inference_id = self.node_id + "-" + str(int(time.time() * 1000))
         inference_path = self.route
@@ -162,9 +168,14 @@ class NodeRuntime:
                 f"Handling tensor for inference_id={inference_id}, input={is_input}, tensor_shape={tensorData.shape}, inference_path={inference_path}"
             )
             if is_input:
-                logits, self.kvCache = self.local_shard.forward(
-                    tensorData, past_key_values=self.kvCache
+                # Get inference-specific KV cache
+                past_kv = self.kvCache.get(inference_id, None)
+                logits, new_kv = self.local_shard.forward(
+                    tensorData, past_key_values=past_kv
                 )
+                # Update inference-specific cache
+                self.kvCache[inference_id] = new_kv
+
                 cur_hop = inference_path.index(self.node_id)
                 if cur_hop < len(inference_path) - 1:
                     next_node_id = inference_path[cur_hop + 1]
@@ -194,15 +205,6 @@ class NodeRuntime:
                 if inference_id not in self.inference_results:
                     self.inference_results[inference_id] = ([], False)
                 self.inference_results[inference_id][0].append(token_id)
-                print(
-                    self.tokenizer.decode(
-                        [token_id],
-                        skip_special_tokens=True,
-                        clean_up_tokenization_spaces=False,
-                    ),
-                    end="",
-                    flush=True,
-                )
                 if token_id in self.eos_ids:
                     self.inference_results[inference_id] = (
                         self.tokenizer.decode(
@@ -212,6 +214,8 @@ class NodeRuntime:
                         ),
                         True,
                     )
+                    # Clean up inference-specific KV cache
+                    self.kvCache.pop(inference_id, None)
                     continue
                 self.p2p_client.sendTensorToPeer(
                     tensor=next_id.cpu(),

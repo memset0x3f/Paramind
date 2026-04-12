@@ -24,10 +24,18 @@ def _parse_family(value: str) -> ModelFamily:
 
 def _stream_and_collect(tokens: Iterable[str]) -> str:
     collected = []
+    previous_text = ""
     print("Streaming output: ", end="", flush=True)
     for token in tokens:
-        print(token, end="", flush=True)
-        collected.append(token)
+        token_text = str(token)
+        if token_text.startswith(previous_text):
+            delta = token_text[len(previous_text) :]
+        else:
+            delta = token_text
+        if delta:
+            print(delta, end="", flush=True)
+        collected.append(token_text)
+        previous_text = token_text
     print()
     return "".join(collected)
 
@@ -59,6 +67,7 @@ def run_local_demo(
             prompt=prompt,
             max_tokens=max_tokens,
             temperature=temperature,
+            system_prompt="",
         )
     )
     print(f"Final output: {final_text}")
@@ -105,6 +114,7 @@ def run_distributed_sim_demo(
             prompt=prompt,
             max_tokens=max_tokens,
             temperature=temperature,
+            system_prompt="",
         )
     )
     print(f"Final output: {final_text}")
@@ -145,7 +155,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-tokens",
         type=int,
-        default=8,
+        default=256,
         help="Maximum number of generated tokens.",
     )
     parser.add_argument(

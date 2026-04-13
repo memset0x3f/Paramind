@@ -38,6 +38,29 @@ class FakeLoader:
         self.loaded = assignment
 
 
+@pytest.fixture(autouse=True)
+def _set_dummy_signal_server(monkeypatch):
+    monkeypatch.setenv("PARAMIND_SIGSERVER", "ws://127.0.0.1:9999")
+
+    class _FakeTokenizer:
+        all_special_ids = []
+        eos_token_id = None
+
+        def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True):
+            return ""
+
+        def __call__(self, text, return_tensors="pt"):
+            raise RuntimeError("Tokenizer call is not expected in scheduler tests")
+
+        def decode(self, token_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False):
+            return ""
+
+    monkeypatch.setattr(
+        "inference.NodeRuntime.AutoTokenizer.from_pretrained",
+        lambda *args, **kwargs: _FakeTokenizer(),
+    )
+
+
 def test_coordinator_broadcasts_plan_after_collecting_profiles():
     transport = FakeTransport()
     coordinator = ClusterCoordinator(
@@ -99,16 +122,18 @@ def test_coordinator_build_plan_accepts_profile_payloads():
 
     plan = coordinator.build_plan(payloads)
 
-    assert [assignment.node_id for assignment in plan.assignments] == [
-        "node-a",
-        "node-b",
-    ]
+    assert [assignment.node_id for assignment in plan.assignments] == ["node-a"]
 
 
 def test_node_runtime_loads_only_its_assignment():
     loader = FakeLoader()
     runtime = NodeRuntime(
-        node_id="node-b", family=ModelFamily.QWEN, total_layers=24, loader=loader
+        node_id="node-b",
+        node_group="test-group",
+        family=ModelFamily.QWEN,
+        total_layers=24,
+        model_id="Qwen/Qwen2.5-0.5B-Instruct",
+        loader=loader,
     )
     assignment = ShardAssignment(
         node_id="node-b", start_layer=12, end_layer=24, role="last"
@@ -124,7 +149,12 @@ def test_node_runtime_loads_only_its_assignment():
 def test_node_runtime_rejects_foreign_assignment():
     loader = FakeLoader()
     runtime = NodeRuntime(
-        node_id="node-b", family=ModelFamily.QWEN, total_layers=24, loader=loader
+        node_id="node-b",
+        node_group="test-group",
+        family=ModelFamily.QWEN,
+        total_layers=24,
+        model_id="Qwen/Qwen2.5-0.5B-Instruct",
+        loader=loader,
     )
     assignment = ShardAssignment(
         node_id="node-a", start_layer=12, end_layer=24, role="last"
@@ -148,8 +178,10 @@ def test_transport_driven_cluster_plan_marks_ready():
     loader = FakeLoader()
     runtime = NodeRuntime(
         node_id="node-b",
+        node_group="test-group",
         family=ModelFamily.QWEN,
         total_layers=24,
+        model_id="Qwen/Qwen2.5-0.5B-Instruct",
         loader=loader,
         on_ready=coordinator.mark_ready,
     )
@@ -178,8 +210,10 @@ def test_node_runtime_persists_global_shard_route_and_owner_index_from_plan():
     )
     runtime = NodeRuntime(
         node_id="node-b",
+        node_group="test-group",
         family=ModelFamily.QWEN,
         total_layers=24,
+        model_id="Qwen/Qwen2.5-0.5B-Instruct",
         loader=FakeLoader(),
     )
     runtime.attach_transport(transport)
@@ -217,8 +251,10 @@ def test_multi_runtime_static_cluster_smoke():
     runtimes = [
         NodeRuntime(
             node_id=node_id,
+            node_group="test-group",
             family=ModelFamily.QWEN,
             total_layers=24,
+            model_id="Qwen/Qwen2.5-0.5B-Instruct",
             loader=loader,
             on_ready=coordinator.mark_ready,
         )
@@ -266,7 +302,12 @@ def test_static_cluster_can_plan_load_and_mark_ready():
 def test_runtime_ignores_other_nodes_reconfiguration_actions_and_keeps_own_subset():
     transport = FakeTransport()
     runtime = NodeRuntime(
-        node_id="node-b", family=ModelFamily.QWEN, total_layers=24, loader=FakeLoader()
+        node_id="node-b",
+        node_group="test-group",
+        family=ModelFamily.QWEN,
+        total_layers=24,
+        model_id="Qwen/Qwen2.5-0.5B-Instruct",
+        loader=FakeLoader(),
     )
     runtime.registry.put(
         ShardRecord(
@@ -380,10 +421,20 @@ def test_reconfiguration_prepare_then_commit_keeps_old_until_new_ready():
     loader_a = FakeLoader()
     loader_c = FakeLoader()
     runtime_a = NodeRuntime(
-        node_id="node-a", family=ModelFamily.QWEN, total_layers=24, loader=loader_a
+        node_id="node-a",
+        node_group="test-group",
+        family=ModelFamily.QWEN,
+        total_layers=24,
+        model_id="Qwen/Qwen2.5-0.5B-Instruct",
+        loader=loader_a,
     )
     runtime_c = NodeRuntime(
-        node_id="node-c", family=ModelFamily.QWEN, total_layers=24, loader=loader_c
+        node_id="node-c",
+        node_group="test-group",
+        family=ModelFamily.QWEN,
+        total_layers=24,
+        model_id="Qwen/Qwen2.5-0.5B-Instruct",
+        loader=loader_c,
     )
     runtime_a.attach_transport(transport, on_ready=coordinator.mark_reconfig_ready)
     runtime_c.attach_transport(transport, on_ready=coordinator.mark_reconfig_ready)

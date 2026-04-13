@@ -5,9 +5,8 @@ import itertools
 import time
 
 from scheduler.ClusterPlanner import (
+    compute_next_plan,
     diff_assignment_changes,
-    plan_static_distribution,
-    replan_distribution,
 )
 from scheduler.ClusterTypes import (
     NodeProfile,
@@ -15,7 +14,7 @@ from scheduler.ClusterTypes import (
     PlacementPlan,
     ReconfigurationPlan,
 )
-from scheduler.NodeInventory import NodeState
+from scheduler.NodeInventory import NodeState, normalize_node_state
 
 
 class ClusterCoordinator:
@@ -25,6 +24,7 @@ class ClusterCoordinator:
         self.transport = transport
         self.model_id = model_id
         self.total_layers = total_layers
+        self.current_node_ids: set[str] = set()
         self.ready_nodes: set[str] = set()
         self.current_plan: PlacementPlan | None = None
         self.last_reconfiguration: ReconfigurationPlan | None = None
@@ -50,10 +50,16 @@ class ClusterCoordinator:
             )
             for profile in profiles
         ]
-        plan = plan_static_distribution(
-            self.model_id,
-            self.total_layers,
-            normalized_profiles,
+        self.current_node_ids = {
+            profile.node_id
+            for profile in normalized_profiles
+            if normalize_node_state(profile).online
+        }
+        plan = compute_next_plan(
+            current=None,
+            nodes=normalized_profiles,
+            model_id=self.model_id,
+            total_layers=self.total_layers,
         )
         self.current_plan = plan
         return plan
@@ -71,19 +77,19 @@ class ClusterCoordinator:
             )
             for profile in profiles
         ]
-        if self.current_plan is None:
-            self.current_plan = plan_static_distribution(
-                self.model_id,
-                self.total_layers,
-                normalized_profiles,
-            )
-            return self.current_plan
-
-        self.current_plan = replan_distribution(
+        next_node_ids = {
+            profile.node_id
+            for profile in normalized_profiles
+            if normalize_node_state(profile).online
+        }
+        self.current_plan = compute_next_plan(
             current=self.current_plan,
             nodes=normalized_profiles,
+            model_id=self.model_id,
             total_layers=self.total_layers,
+            previous_node_ids=self.current_node_ids,
         )
+        self.current_node_ids = next_node_ids
         return self.current_plan
 
     def build_reconfiguration(self, profiles) -> ReconfigurationPlan:

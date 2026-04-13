@@ -35,6 +35,7 @@ def test_static_distribution_assigns_contiguous_ranges():
     sizes = {
         assignment.node_id: assignment.num_layers for assignment in plan.assignments
     }
-    assert sizes["node-a"] >= sizes["node-c"]
+    # Best-quality node is filled first; 24 layers fit entirely on node-a.
+    assert sizes == {"node-a": 24}
     assert plan.coordinator_id == "node-a"
     assert choose_coordinator(nodes) == "node-a"

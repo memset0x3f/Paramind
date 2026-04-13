@@ -102,6 +102,12 @@ def choose_coordinator(
     normalized_nodes = [normalize_node_state(node) for node in nodes]
     if not normalized_nodes:
         raise ValueError("At least one node profile is required")
+    candidate_nodes = normalized_nodes
+    if current_plan is not None and current_plan.assignments:
+        assigned_node_ids = {assignment.node_id for assignment in current_plan.assignments}
+        scoped = [node for node in normalized_nodes if node.node_id in assigned_node_ids]
+        if scoped:
+            candidate_nodes = scoped
     effective_total_layers = total_layers
     if effective_total_layers is None:
         if current_plan is not None and current_plan.assignments:
@@ -111,11 +117,11 @@ def choose_coordinator(
         else:
             effective_total_layers = max(len(normalized_nodes), 1)
     return min(
-        normalized_nodes,
+        candidate_nodes,
         key=lambda node: coordinator_score(
             node,
             total_layers=effective_total_layers,
-            active_nodes=len(normalized_nodes),
+            active_nodes=len(candidate_nodes),
             current_plan=current_plan,
         ),
     ).node_id
@@ -147,6 +153,26 @@ def estimate_assignment_cost(
     bandwidth_cost = 0.0 if bandwidth_gbps is None else 1.0 / max(bandwidth_gbps, 0.1)
     compute_bias = -node.effective_speed() * 0.01
     return load_penalty + role_cost + bandwidth_cost + compute_bias + device_bonus
+
+
+def _sort_nodes_by_quality_desc(nodes: list[NodeState]) -> list[NodeState]:
+    """Higher compute speed and larger capacity rank first (cold-start greedy order)."""
+    return sorted(
+        nodes,
+        key=lambda node: (
+            -node.effective_speed(),
+            -node.effective_capacity_blocks(),
+            node.node_id,
+        ),
+    )
+
+
+def _node_quality_key(node: NodeState) -> tuple[float, int, str]:
+    return (
+        node.effective_speed(),
+        node.effective_capacity_blocks(),
+        node.node_id,
+    )
 
 
 def _arrange_nodes_for_pipeline(
@@ -245,76 +271,74 @@ def _estimate_stage_cost(
     return cost
 
 
-def _solve_cold_start_dp(
+def _solve_cold_start_greedy_by_quality(
     model_id: str,
     total_layers: int,
     ordered_nodes: list[NodeState],
     layer_work: list[float],
-) -> tuple[_PlanScore, PlacementPlan] | None:
-    prefix = [0.0]
-    for value in layer_work:
-        prefix.append(prefix[-1] + value)
+) -> PlacementPlan | None:
+    """Fill highest-quality nodes to capacity first, then the next, until all layers are placed.
 
-    node_count = len(ordered_nodes)
-    inf_score = _PlanScore(math.inf, math.inf, math.inf)
-    dp: list[list[_PlanScore]] = [
-        [inf_score for _ in range(total_layers + 1)] for _ in range(node_count + 1)
-    ]
-    prev: list[list[int | None]] = [
-        [None for _ in range(total_layers + 1)] for _ in range(node_count + 1)
-    ]
-    dp[0][0] = _PlanScore(0.0, 0.0, 0.0)
+    Uses only a prefix of ``ordered_nodes`` (quality-descending). Returns ``None`` if
+    aggregate capacity is insufficient (caller should raise).
+    """
+    _ = layer_work  # cold-start greedy uses uniform layer slots; work weights are for replan cost only
+    remaining = total_layers
+    used_nodes: list[NodeState] = []
+    boundaries: list[int] = [0]
 
-    for i in range(1, node_count + 1):
-        node = ordered_nodes[i - 1]
-        for end in range(i, total_layers - (node_count - i) + 1):
-            best = inf_score
-            best_start = None
-            for start in range(i - 1, end):
-                previous = dp[i - 1][start]
-                if math.isinf(previous.objective):
-                    continue
-                stage_cost = _estimate_stage_cost(
-                    start,
-                    end,
-                    node,
-                    total_layers,
-                    prefix,
-                    is_first_stage=(i == 1),
-                    is_last_stage=(i == node_count),
-                )
-                if math.isinf(stage_cost):
-                    continue
-                bottleneck = max(previous.bottleneck, stage_cost)
-                total = previous.total + stage_cost
-                score = _PlanScore(bottleneck, bottleneck, total)
-                if (score.objective, score.total) < (best.objective, best.total):
-                    best = score
-                    best_start = start
-            dp[i][end] = best
-            prev[i][end] = best_start
-
-    best_plan: tuple[_PlanScore, PlacementPlan] | None = None
-    for used_nodes in range(1, node_count + 1):
-        score = dp[used_nodes][total_layers]
-        if math.isinf(score.objective):
+    for node in ordered_nodes:
+        if remaining <= 0:
+            break
+        cap = node.effective_capacity_blocks()
+        if cap <= 0:
             continue
-        boundaries = [0] * (used_nodes + 1)
-        boundaries[used_nodes] = total_layers
-        cursor = total_layers
-        for i in range(used_nodes, 0, -1):
-            start = prev[i][cursor]
-            if start is None:
-                break
-            boundaries[i - 1] = start
-            cursor = start
-        plan = _build_assignments(model_id, ordered_nodes[:used_nodes], boundaries)
-        if best_plan is None or (score.objective, score.total) < (
-            best_plan[0].objective,
-            best_plan[0].total,
-        ):
-            best_plan = (score, plan)
-    return best_plan
+        take = min(cap, remaining)
+        if take <= 0:
+            continue
+        used_nodes.append(node)
+        boundaries.append(boundaries[-1] + take)
+        remaining -= take
+
+    if remaining > 0 or not used_nodes:
+        return None
+    if boundaries[-1] != total_layers:
+        return None
+    return _build_assignments(model_id, used_nodes, boundaries)
+
+
+def _annotate_plan_sources_from_current(
+    base_plan: PlacementPlan,
+    current: PlacementPlan,
+    ordered_nodes: list[NodeState],
+    total_layers: int,
+) -> PlacementPlan:
+    owner_by_layer = _owner_by_layer(current, total_layers)
+    assignments: list[ShardAssignment] = []
+    for assignment in base_plan.assignments:
+        dominant_owner = _dominant_owner(
+            owner_by_layer, assignment.start_layer, assignment.end_layer
+        )
+        source_node_id = None if dominant_owner == assignment.node_id else dominant_owner
+        assignments.append(
+            ShardAssignment(
+                node_id=assignment.node_id,
+                start_layer=assignment.start_layer,
+                end_layer=assignment.end_layer,
+                role=assignment.role,
+                source_node_id=source_node_id,
+            )
+        )
+    temp_plan = PlacementPlan(model_id=current.model_id, assignments=assignments)
+    return PlacementPlan(
+        model_id=current.model_id,
+        assignments=assignments,
+        coordinator_id=choose_coordinator(
+            ordered_nodes,
+            total_layers=total_layers,
+            current_plan=temp_plan,
+        ),
+    )
 
 
 def plan_static_distribution(
@@ -339,11 +363,29 @@ def plan_static_distribution(
     if total_capacity < total_layers:
         raise ValueError("Insufficient cluster capacity for total layers")
 
-    ordered_nodes = _arrange_nodes_for_pipeline(active_nodes, total_layers=total_layers)
-    solved = _solve_cold_start_dp(model_id, total_layers, ordered_nodes, layer_work)
-    if solved is None:
-        raise ValueError("No feasible contiguous placement found for the current nodes")
-    return solved[1]
+    ordered_nodes = _sort_nodes_by_quality_desc(active_nodes)
+    plan = _solve_cold_start_greedy_by_quality(
+        model_id, total_layers, ordered_nodes, layer_work
+    )
+    if plan is None:
+        raise ValueError(
+            "No feasible contiguous placement: model does not fit even using every node"
+        )
+    return plan
+
+
+def _normalize_active_nodes(nodes) -> list[NodeState]:
+    normalized_nodes = [normalize_node_state(node) for node in nodes]
+    active_nodes = [
+        node
+        for node in normalized_nodes
+        if node.online and node.effective_capacity_blocks() > 0
+    ]
+    if not active_nodes:
+        raise ValueError(
+            "At least one online node with positive capacity is required for planning"
+        )
+    return active_nodes
 
 
 def _assignment_can_stay(
@@ -553,36 +595,11 @@ def _solve_replan_dp(
             cursor = start
 
         base_plan = _build_assignments(model_id, ordered_nodes[:used_nodes], boundaries)
-        owner_by_layer = _owner_by_layer(current, total_layers)
-        assignments: list[ShardAssignment] = []
-        for assignment in base_plan.assignments:
-            dominant_owner = _dominant_owner(
-                owner_by_layer, assignment.start_layer, assignment.end_layer
-            )
-            source_node_id = (
-                None if dominant_owner == assignment.node_id else dominant_owner
-            )
-            assignments.append(
-                ShardAssignment(
-                    node_id=assignment.node_id,
-                    start_layer=assignment.start_layer,
-                    end_layer=assignment.end_layer,
-                    role=assignment.role,
-                    source_node_id=source_node_id,
-                )
-            )
-        temp_plan = PlacementPlan(
-            model_id=current.model_id,
-            assignments=assignments,
-        )
-        plan = PlacementPlan(
-            model_id=current.model_id,
-            assignments=assignments,
-            coordinator_id=choose_coordinator(
-                ordered_nodes[:used_nodes],
-                total_layers=total_layers,
-                current_plan=temp_plan,
-            ),
+        plan = _annotate_plan_sources_from_current(
+            base_plan=base_plan,
+            current=current,
+            ordered_nodes=ordered_nodes[:used_nodes],
+            total_layers=total_layers,
         )
         if best_plan is None or (score.objective, score.total) < (
             best_plan[0].objective,
@@ -592,23 +609,13 @@ def _solve_replan_dp(
     return best_plan
 
 
-def replan_distribution(
+def plan_membership_stable_distribution(
     current: PlacementPlan,
     nodes,
     total_layers: int,
     layer_work: list[float] | None = None,
 ) -> PlacementPlan:
-    normalized_nodes = [normalize_node_state(node) for node in nodes]
-    active_nodes = [
-        node
-        for node in normalized_nodes
-        if node.online and node.effective_capacity_blocks() > 0
-    ]
-    if not active_nodes:
-        raise ValueError(
-            "At least one online node with positive capacity is required for replanning"
-        )
-
+    active_nodes = _normalize_active_nodes(nodes)
     node_by_id = {node.node_id: node for node in active_nodes}
     current_node_ids = {assignment.node_id for assignment in current.assignments}
     active_node_ids = set(node_by_id.keys())
@@ -618,7 +625,7 @@ def replan_distribution(
             _assignment_can_stay(assignment, node_by_id)
             for assignment in current.assignments
         )
-        and current_node_ids == active_node_ids
+        and current_node_ids.issubset(active_node_ids)
     ):
         return current
 
@@ -634,3 +641,360 @@ def replan_distribution(
     if solved is None:
         raise ValueError("No feasible replan found for the current nodes")
     return solved[1]
+
+
+def plan_join_distribution(
+    current: PlacementPlan,
+    nodes,
+    total_layers: int,
+    layer_work: list[float] | None = None,
+) -> PlacementPlan:
+    """Insert stronger joiners by absorbing the weakest local cluster contiguously."""
+    active_nodes = _normalize_active_nodes(nodes)
+    node_by_id = {node.node_id: node for node in active_nodes}
+    active_node_ids = set(node_by_id.keys())
+    current_node_ids = {assignment.node_id for assignment in current.assignments}
+
+    if not current_node_ids.issubset(active_node_ids):
+        return plan_membership_stable_distribution(
+            current=current,
+            nodes=nodes,
+            total_layers=total_layers,
+            layer_work=layer_work,
+        )
+
+    standby_nodes = [
+        node for node in _sort_nodes_by_quality_desc(active_nodes) if node.node_id not in current_node_ids
+    ]
+    if not standby_nodes:
+        return current
+
+    working = current
+
+    for standby in standby_nodes:
+        ordered = sorted(working.assignments, key=lambda item: item.start_layer)
+        weakest_index = min(
+            range(len(ordered)),
+            key=lambda index: _node_quality_key(node_by_id[ordered[index].node_id]),
+        )
+        weakest_node = node_by_id[ordered[weakest_index].node_id]
+        if _node_quality_key(standby) <= _node_quality_key(weakest_node):
+            continue
+
+        remaining = standby.effective_capacity_blocks()
+        if remaining <= 0:
+            continue
+
+        def _neighbor_side(left_index: int, right_index: int) -> str | None:
+            left_quality = (
+                _node_quality_key(node_by_id[ordered[left_index].node_id])
+                if left_index >= 0
+                else None
+            )
+            right_quality = (
+                _node_quality_key(node_by_id[ordered[right_index].node_id])
+                if right_index < len(ordered)
+                else None
+            )
+            if left_quality is None and right_quality is None:
+                return None
+            if left_quality is None:
+                return "right"
+            if right_quality is None:
+                return "left"
+            return "left" if left_quality <= right_quality else "right"
+
+        center = ordered[weakest_index]
+        new_start = center.start_layer
+        new_end = center.end_layer
+
+        if remaining >= center.num_layers:
+            remaining -= center.num_layers
+            left_bound = weakest_index
+            right_bound = weakest_index
+        else:
+            preferred_side = _neighbor_side(weakest_index - 1, weakest_index + 1)
+            if preferred_side == "left":
+                new_start = center.end_layer - remaining
+            else:
+                new_end = center.start_layer + remaining
+            remaining = 0
+            left_bound = weakest_index
+            right_bound = weakest_index
+
+        while remaining > 0:
+            candidate_side = _neighbor_side(left_bound - 1, right_bound + 1)
+            if candidate_side is None:
+                break
+            if candidate_side == "left":
+                candidate = ordered[left_bound - 1]
+                width = candidate.num_layers
+                if remaining >= width:
+                    new_start = candidate.start_layer
+                    remaining -= width
+                    left_bound -= 1
+                else:
+                    new_start = candidate.end_layer - remaining
+                    remaining = 0
+            else:
+                candidate = ordered[right_bound + 1]
+                width = candidate.num_layers
+                if remaining >= width:
+                    new_end = candidate.end_layer
+                    remaining -= width
+                    right_bound += 1
+                else:
+                    new_end = candidate.start_layer + remaining
+                    remaining = 0
+
+        segments: list[tuple[str, int, int]] = []
+        inserted = False
+        for assignment in ordered:
+            if assignment.end_layer <= new_start:
+                segments.append(
+                    (assignment.node_id, assignment.start_layer, assignment.end_layer)
+                )
+                continue
+            if assignment.start_layer >= new_end:
+                if not inserted:
+                    segments.append((standby.node_id, new_start, new_end))
+                    inserted = True
+                segments.append(
+                    (assignment.node_id, assignment.start_layer, assignment.end_layer)
+                )
+                continue
+
+            if assignment.start_layer < new_start:
+                segments.append((assignment.node_id, assignment.start_layer, new_start))
+            if not inserted:
+                segments.append((standby.node_id, new_start, new_end))
+                inserted = True
+            if assignment.end_layer > new_end:
+                segments.append((assignment.node_id, new_end, assignment.end_layer))
+
+        if not inserted:
+            segments.append((standby.node_id, new_start, new_end))
+
+        assignments: list[ShardAssignment] = []
+        ordered_participants: list[NodeState] = []
+        seen_nodes: set[str] = set()
+        for index, (node_id, start, end) in enumerate(segments):
+            if end <= start:
+                continue
+            role = "middle"
+            if index == 0:
+                role = "first"
+            if index == len(segments) - 1:
+                role = "last" if role == "middle" else role
+            assignments.append(
+                ShardAssignment(
+                    node_id=node_id,
+                    start_layer=start,
+                    end_layer=end,
+                    role=role,
+                )
+            )
+            if node_id not in seen_nodes:
+                ordered_participants.append(node_by_id[node_id])
+                seen_nodes.add(node_id)
+
+        base_plan = PlacementPlan(model_id=current.model_id, assignments=assignments)
+        working = _annotate_plan_sources_from_current(
+            base_plan=base_plan,
+            current=working,
+            ordered_nodes=ordered_participants,
+            total_layers=total_layers,
+        )
+
+    return working
+
+
+def plan_drop_distribution(
+    current: PlacementPlan,
+    nodes,
+    total_layers: int,
+    layer_work: list[float] | None = None,
+) -> PlacementPlan:
+    """Repair drop events by filling local gaps first, then activating standby capacity.
+
+    The current plan remains authoritative for route order. When an assigned node
+    disappears, the planner first lets nearby surviving nodes absorb as much of the
+    missing contiguous range as their spare capacity allows. Only the remaining gap
+    is handed to standby nodes, which are inserted at the gap location rather than
+    appended to the route tail. This preserves monotonic routing, avoids crossing
+    assignments, and minimizes new network jumps.
+    """
+    active_nodes = _normalize_active_nodes(nodes)
+    node_by_id = {node.node_id: node for node in active_nodes}
+    active_node_ids = set(node_by_id.keys())
+    current_node_ids = {assignment.node_id for assignment in current.assignments}
+
+    if current_node_ids.issubset(active_node_ids) and all(
+        _assignment_can_stay(assignment, node_by_id) for assignment in current.assignments
+    ):
+        return current
+
+    layer_work = _layer_work(total_layers, layer_work)
+    total_capacity = sum(node.effective_capacity_blocks() for node in active_nodes)
+    if total_capacity < total_layers:
+        raise ValueError("Insufficient cluster capacity for total layers")
+
+    ordered_current = sorted(current.assignments, key=lambda item: item.start_layer)
+    surviving_widths: dict[str, int] = {}
+    spare_capacity: dict[str, int] = {}
+    standby_nodes = {
+        node.node_id: node
+        for node in _sort_nodes_by_quality_desc(active_nodes)
+        if node.node_id not in current_node_ids
+    }
+    standby_queue = list(standby_nodes.keys())
+
+    for assignment in ordered_current:
+        if assignment.node_id not in active_node_ids:
+            continue
+        surviving_widths[assignment.node_id] = assignment.num_layers
+        spare_capacity[assignment.node_id] = max(
+            0,
+            node_by_id[assignment.node_id].effective_capacity_blocks()
+            - assignment.num_layers,
+        )
+
+    inserted_by_gap: dict[int, list[tuple[str, int]]] = {}
+
+    for gap_index, assignment in enumerate(ordered_current):
+        if assignment.node_id in active_node_ids:
+            continue
+
+        remaining_gap = assignment.num_layers
+        distance = 1
+        while remaining_gap > 0 and distance < len(ordered_current):
+            for candidate_index in (gap_index - distance, gap_index + distance):
+                if remaining_gap <= 0:
+                    break
+                if candidate_index < 0 or candidate_index >= len(ordered_current):
+                    continue
+                candidate = ordered_current[candidate_index]
+                candidate_id = candidate.node_id
+                if candidate_id not in surviving_widths:
+                    continue
+                available = spare_capacity.get(candidate_id, 0)
+                if available <= 0:
+                    continue
+                take = min(available, remaining_gap)
+                surviving_widths[candidate_id] += take
+                spare_capacity[candidate_id] -= take
+                remaining_gap -= take
+            distance += 1
+
+        if remaining_gap > 0:
+            inserted: list[tuple[str, int]] = []
+            while remaining_gap > 0 and standby_queue:
+                standby_id = standby_queue.pop(0)
+                standby = standby_nodes[standby_id]
+                take = min(standby.effective_capacity_blocks(), remaining_gap)
+                if take <= 0:
+                    continue
+                inserted.append((standby_id, take))
+                remaining_gap -= take
+            if remaining_gap > 0:
+                raise ValueError("No feasible drop repair found for the current nodes")
+            inserted_by_gap[gap_index] = inserted
+
+    rebuilt_nodes: list[NodeState] = []
+    boundaries: list[int] = [0]
+
+    for index, assignment in enumerate(ordered_current):
+        if assignment.node_id in surviving_widths:
+            width = surviving_widths[assignment.node_id]
+            if width > 0:
+                rebuilt_nodes.append(node_by_id[assignment.node_id])
+                boundaries.append(boundaries[-1] + width)
+        else:
+            for standby_id, width in inserted_by_gap.get(index, []):
+                rebuilt_nodes.append(node_by_id[standby_id])
+                boundaries.append(boundaries[-1] + width)
+
+    if boundaries[-1] != total_layers or not rebuilt_nodes:
+        raise ValueError("No feasible drop repair found for the current nodes")
+
+    base_plan = _build_assignments(
+        current.model_id,
+        rebuilt_nodes,
+        boundaries,
+    )
+    return _annotate_plan_sources_from_current(
+        base_plan=base_plan,
+        current=current,
+        ordered_nodes=rebuilt_nodes,
+        total_layers=total_layers,
+    )
+
+
+def compute_next_plan(
+    current: PlacementPlan | None,
+    nodes,
+    model_id: str,
+    total_layers: int,
+    layer_work: list[float] | None = None,
+    previous_node_ids: set[str] | None = None,
+) -> PlacementPlan:
+    active_nodes = _normalize_active_nodes(nodes)
+    if current is None or not current.assignments:
+        return plan_static_distribution(
+            model_id=model_id,
+            total_layers=total_layers,
+            nodes=active_nodes,
+            layer_work=layer_work,
+        )
+
+    current_node_ids = (
+        set(previous_node_ids)
+        if previous_node_ids is not None
+        else {assignment.node_id for assignment in current.assignments}
+    )
+    active_node_ids = {node.node_id for node in active_nodes}
+
+    if active_node_ids == current_node_ids:
+        return plan_membership_stable_distribution(
+            current=current,
+            nodes=active_nodes,
+            total_layers=total_layers,
+            layer_work=layer_work,
+        )
+    if active_node_ids.issuperset(current_node_ids):
+        return plan_join_distribution(
+            current=current,
+            nodes=active_nodes,
+            total_layers=total_layers,
+            layer_work=layer_work,
+        )
+    if active_node_ids.issubset(current_node_ids):
+        return plan_drop_distribution(
+            current=current,
+            nodes=active_nodes,
+            total_layers=total_layers,
+            layer_work=layer_work,
+        )
+    return plan_membership_stable_distribution(
+        current=current,
+        nodes=active_nodes,
+        total_layers=total_layers,
+        layer_work=layer_work,
+    )
+
+
+def replan_distribution(
+    current: PlacementPlan,
+    nodes,
+    total_layers: int,
+    layer_work: list[float] | None = None,
+    previous_node_ids: set[str] | None = None,
+) -> PlacementPlan:
+    return compute_next_plan(
+        current=current,
+        nodes=nodes,
+        model_id=current.model_id,
+        total_layers=total_layers,
+        layer_work=layer_work,
+        previous_node_ids=previous_node_ids,
+    )

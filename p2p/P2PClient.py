@@ -16,8 +16,10 @@ from common import createUdpSocket, findFreePort, getLocalIP
 from common import FunctionRegistry
 from common.Constants import UDP_CHUNK_SIZE
 from common.Utils import TORCH_PACKET_MAGIC, decodeTorchPacket
+from scheduler.NodeInventory import build_node_state
 from p2p.PeerSocket import PeerSocket
 from inference import QwenSlice
+from scheduler.ClusterTypes import NodeProfile
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +126,12 @@ class P2PClient:
     ):
         self.peerSocket.send_to_peer(message, peer_uuid)
 
+    def broadcast(self, message):
+        for peer_uuid in self.peerInfo:
+            if peer_uuid == str(self.info.uuid):
+                continue
+            self.sendToPeer(message, peer_uuid)
+
     def sendTensorToPeer(
         self,
         tensor: torch.Tensor,
@@ -195,13 +203,15 @@ class P2PClient:
     #         finally:
     #             self.torchInputQueue.task_done()
 
-    def registerToGroup(self, groupId: str):
+    def registerToGroup(self, groupId: str, node_profile: NodeProfile):
         if not self.isConnectedToSignalServer:
             raise P2PConnectionError(
                 "Not connected to signaling server.",
                 "P2PClient.registerToGroup",
             )
         assert self.signalServerWs is not None
+
+        profile_dict = node_profile.to_dict()
 
         registerMessage = {
             "type": "register",
@@ -211,6 +221,8 @@ class P2PClient:
             "publicPort": self.info.port,
             "internalIp": self.info.internal_ip,
             "internalPort": self.info.internal_port,
+            "timestamp": time.time(),
+            "profile": profile_dict,
         }
         self.signalServerWs.send(json.dumps(registerMessage))
         self.hasRecievedAllPeers = False
@@ -367,6 +379,10 @@ class P2PClient:
         self.hasRecievedAllPeers = True
         logger.info(f"Peers in group: {peers}")
 
+        # Bridge signaling allPeers event to runtime handlers.
+        if self.runtimeHandlers.get("allPeers") is not None:
+            self.runtimeHandlers["allPeers"](data)
+
     @_signalServerHandlers.register("newPeer")
     def _handleNewPeer(self, data):
         newPeer = data["peer"]
@@ -381,6 +397,9 @@ class P2PClient:
         )
         logger.info(f"New peer joined: {newPeer}")
         self.holePunch(self.peerInfo[newPeer["uuid"]])
+
+        if self.runtimeHandlers.get("newPeer") is not None:
+            self.runtimeHandlers["newPeer"](data)
 
     @_signalServerHandlers.register("punchNotification")
     def _handlePunchNotification(self, data):

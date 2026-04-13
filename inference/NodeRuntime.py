@@ -3,14 +3,21 @@ from __future__ import annotations
 import time
 from typing import Any, Callable, Optional
 
-from scheduler.ClusterTypes import NodeReconfigurationAction, ShardAssignment
+from scheduler.ClusterTypes import (
+    NodeReconfigurationAction,
+    ShardAssignment,
+    NodeProfile,
+)
+from scheduler.ClusterCoordinator import ClusterCoordinator
 from .ShardConfig import ModelFamily, ShardConfig
 from .ShardRegistry import ShardRecord, ShardRegistry
 from .ShardLoader import ShardLoader, ModelShard
+from scheduler.DeviceProfile import build_node_profile
 
 from p2p import P2PClient
 from common.Utils import getSignalServerAddr
 import uuid
+import json
 import torch
 import queue
 import threading
@@ -37,6 +44,7 @@ class NodeRuntime:
         self.node_group = node_group
         self.family = family
         self.total_layers = total_layers
+        self.model_id = model_id
         self.device = device
         self.loader = loader
         self.on_ready = on_ready
@@ -63,7 +71,14 @@ class NodeRuntime:
         if self.tokenizer.eos_token_id is not None:
             self.eos_ids.add(self.tokenizer.eos_token_id)
 
+        self.coordinator = None
+        self.is_coordinator = False
+        self.profile = build_node_profile(self.node_id)
+        self.peer_profiles: dict[str, NodeProfile] = {self.node_id: self.profile}
+
     def _register_handlers(self):
+        self.p2p_client.register_handler("allPeers", self.handle_allPeers)
+        self.p2p_client.register_handler("newPeer", self.handle_newPeer)
         self.p2p_client.register_handler("cluster_plan", self.handle_cluster_plan)
         self.p2p_client.register_handler(
             "reconfiguration_prepare", self.handle_reconfiguration_prepare
@@ -77,7 +92,7 @@ class NodeRuntime:
     def run(self):
         self._register_handlers()
         self.p2p_client.connect()
-        self.p2p_client.registerToGroup(self.node_group)
+        self.p2p_client.registerToGroup(self.node_group, self.profile)
         self.p2p_client.waitForAllPeerConnection()
 
     def distributedInfer(self, prompt: str):
@@ -102,6 +117,32 @@ class NodeRuntime:
             start_node_id=stard_node_id,
             input=True,
         )
+
+    def handle_newPeer(self, payload: dict):
+        peer_id = payload.get("uuid")
+        if peer_id and peer_id != self.node_id:
+            profile_dict = payload.get("profile", {})
+            self.peer_profiles[peer_id] = NodeProfile.from_dict(profile_dict)
+            logger.info(f"New peer connected: {peer_id} with profile {profile_dict}")
+
+    def handle_allPeers(self, payload: dict):
+        peers = payload.get("peers", [])
+        for peer in peers:
+            peer_id = peer.get("uuid")
+            if peer_id and peer_id != self.node_id:
+                profile_dict = peer.get("profile", {})
+                self.peer_profiles[peer_id] = NodeProfile.from_dict(profile_dict)
+        if len(peers) == 0 or (len(peers) == 1 and str(self.node_id) in peers):
+            assert (
+                self.coordinator is None
+            ), "Coordinator should not exist before allPeers message"
+            self.coordinator = ClusterCoordinator(
+                transport=self.p2p_client,
+                model_id=self.model_id,
+                total_layers=self.total_layers,
+            )
+            self.is_coordinator = True
+            logger.info("Node %s initialized as coordinator", self.node_id)
 
     def _select_assignment(self, payload: dict) -> ShardAssignment | None:
         for item in payload.get("assignments", []):

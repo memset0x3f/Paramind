@@ -29,13 +29,21 @@ def test_start_builds_initial_plan_for_selected_nodes():
     assert session.active_node_ids == {"node-a", "node-b", "node-c"}
     assert _assignment_pairs(session.current_plan)[0][0] == 0
     assert _assignment_pairs(session.current_plan)[-1][1] == 24
-    assert session.node_profiles["node-a"].loaded_shards == [(0, 12)]
-    assert session.node_profiles["node-b"].loaded_shards == [(16, 24)]
-    assert session.node_profiles["node-c"].loaded_shards == [(12, 16)]
+    assert [
+        (assignment.node_id, assignment.start_layer, assignment.end_layer)
+        for assignment in session.current_plan.assignments
+    ] == [
+        ("node-a", 0, 10),
+        ("node-b", 10, 18),
+        ("node-c", 18, 24),
+    ]
+    assert session.node_profiles["node-a"].loaded_shards == [(0, 10)]
+    assert session.node_profiles["node-b"].loaded_shards == [(10, 18)]
+    assert session.node_profiles["node-c"].loaded_shards == [(18, 24)]
     assert "[PLACEMENT]" in rendered
 
 
-def test_join_adds_node_and_updates_loaded_state_from_new_plan():
+def test_join_allows_stronger_new_node_to_take_over_from_current_weakest_owner():
     session = ClusterDemoSession()
     session.start(["node-a", "node-b", "node-c"])
 
@@ -43,50 +51,51 @@ def test_join_adds_node_and_updates_loaded_state_from_new_plan():
 
     assert "node-d | active=yes" in rendered
     assert session.current_plan is not None
-    assert any(
-        assignment.node_id == "node-d"
-        for assignment in session.current_plan.assignments
-    )
-    node_d_ranges = [
-        (assignment.start_layer, assignment.end_layer)
-        for assignment in session.current_plan.assignments
-        if assignment.node_id == "node-d"
+    assert [(assignment.node_id, assignment.start_layer, assignment.end_layer) for assignment in session.current_plan.assignments] == [
+        ("node-a", 0, 10),
+        ("node-b", 10, 17),
+        ("node-d", 17, 24),
     ]
-    assert session.node_profiles["node-d"].loaded_shards == node_d_ranges
+    assert session.node_profiles["node-a"].loaded_shards == [(0, 10)]
+    assert session.node_profiles["node-b"].loaded_shards == [(10, 17)]
+    assert session.node_profiles["node-c"].loaded_shards == []
+    assert session.node_profiles["node-d"].loaded_shards == [(17, 24)]
 
 
-def test_drop_preserves_loaded_history_for_remaining_nodes():
+def test_drop_reactivates_standby_node_after_local_absorption():
     session = ClusterDemoSession()
     session.start(["node-a", "node-b", "node-c"])
     session.join("node-d")
 
-    rendered = session.drop("node-b")
+    rendered = session.drop("node-d")
 
-    assert "node-b | active=no" in rendered
-    assert "node-d | active=yes" in rendered
-    assert session.node_profiles["node-b"].loaded_shards == []
+    assert "node-d | active=no" in rendered
+    assert "node-c | active=yes" in rendered
+    assert session.node_profiles["node-d"].loaded_shards == []
     assert session.current_plan is not None
-    assert session.active_node_ids == {"node-a", "node-c", "node-d"}
-    node_d_ranges = [
-        (assignment.start_layer, assignment.end_layer)
-        for assignment in session.current_plan.assignments
-        if assignment.node_id == "node-d"
+    assert session.active_node_ids == {"node-a", "node-b", "node-c"}
+    assert [(assignment.node_id, assignment.start_layer, assignment.end_layer) for assignment in session.current_plan.assignments] == [
+        ("node-a", 0, 10),
+        ("node-b", 10, 18),
+        ("node-c", 18, 24),
     ]
-    assert session.node_profiles["node-d"].loaded_shards == node_d_ranges
+    assert session.node_profiles["node-b"].loaded_shards == [(10, 18)]
+    assert session.node_profiles["node-c"].loaded_shards == [(18, 24)]
 
 
 def test_start_resets_session_state_instead_of_accumulating_ranges():
     session = ClusterDemoSession()
-    session.start(["node-a", "node-b"])
+    session.start(["node-a", "node-b", "node-c"])
     session.join("node-d")
 
-    session.start(["node-a"])
+    session.start(["node-a", "node-b", "node-c"])
 
-    assert session.active_node_ids == {"node-a"}
+    assert session.active_node_ids == {"node-a", "node-b", "node-c"}
     assert session.current_plan is not None
-    assert _assignment_pairs(session.current_plan) == [(0, 24)]
-    assert session.node_profiles["node-a"].loaded_shards == [(0, 24)]
-    assert session.node_profiles["node-b"].loaded_shards == []
+    assert _assignment_pairs(session.current_plan) == [(0, 10), (10, 18), (18, 24)]
+    assert session.node_profiles["node-a"].loaded_shards == [(0, 10)]
+    assert session.node_profiles["node-b"].loaded_shards == [(10, 18)]
+    assert session.node_profiles["node-c"].loaded_shards == [(18, 24)]
     assert session.node_profiles["node-d"].loaded_shards == []
 
 
@@ -101,9 +110,9 @@ def test_process_command_supports_show_join_drop_and_quit():
     assert keep_running is True
     assert "node-d | active=yes" in output
 
-    output, keep_running = session.process_command("drop node-b")
+    output, keep_running = session.process_command("drop node-d")
     assert keep_running is True
-    assert "node-b | active=no" in output
+    assert "node-d | active=no" in output
 
     output, keep_running = session.process_command("quit")
     assert keep_running is False
@@ -120,6 +129,36 @@ def test_process_command_reports_invalid_input_without_crashing():
     output, keep_running = session.process_command("start node-a,node-z")
     assert keep_running is True
     assert "unknown nodes" in output.lower()
+
+
+def test_drop_that_makes_cluster_infeasible_reports_error_without_mutating_state():
+    session = ClusterDemoSession()
+    session.start(["node-a", "node-b", "node-c"])
+
+    before_plan = [
+        (assignment.node_id, assignment.start_layer, assignment.end_layer)
+        for assignment in session.current_plan.assignments
+    ]
+    before_active = set(session.active_node_ids)
+    before_loaded = {
+        node_id: list(profile.loaded_shards)
+        for node_id, profile in session.node_profiles.items()
+    }
+
+    output, keep_running = session.process_command("drop node-c")
+
+    assert keep_running is True
+    assert "insufficient cluster capacity" in output.lower()
+    assert session.current_plan is not None
+    assert [
+        (assignment.node_id, assignment.start_layer, assignment.end_layer)
+        for assignment in session.current_plan.assignments
+    ] == before_plan
+    assert session.active_node_ids == before_active
+    assert {
+        node_id: list(profile.loaded_shards)
+        for node_id, profile in session.node_profiles.items()
+    } == before_loaded
 
 
 def test_scoring_output_uses_stage_time_metrics_instead_of_quality_maximization():

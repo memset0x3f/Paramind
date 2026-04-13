@@ -29,8 +29,8 @@ BASE_NODE_PROFILES = {
         host="10.0.0.1",
         device="cpu",
         total_memory_gb=32.0,
-        free_memory_gb=28.0,
-        compute_score=30.0,
+        free_memory_gb=10.0,
+        compute_score=50.0,
         loaded_shards=[],
     ),
     "node-b": NodeProfile(
@@ -38,7 +38,7 @@ BASE_NODE_PROFILES = {
         host="10.0.0.2",
         device="cpu",
         total_memory_gb=32.0,
-        free_memory_gb=27.0,
+        free_memory_gb=8.0,
         compute_score=20.0,
         loaded_shards=[],
     ),
@@ -47,7 +47,7 @@ BASE_NODE_PROFILES = {
         host="10.0.0.3",
         device="cpu",
         total_memory_gb=32.0,
-        free_memory_gb=26.0,
+        free_memory_gb=8.0,
         compute_score=10.0,
         loaded_shards=[],
     ),
@@ -56,8 +56,8 @@ BASE_NODE_PROFILES = {
         host="10.0.0.4",
         device="cuda",
         total_memory_gb=64.0,
-        free_memory_gb=40.0,
-        compute_score=80.0,
+        free_memory_gb=7.0,
+        compute_score=30.0,
         loaded_shards=[],
     ),
 }
@@ -319,12 +319,20 @@ class ClusterDemoSession:
             raise ValueError(f"unknown node: {node_id}")
         if node_id in self.active_node_ids:
             raise ValueError(f"node already active: {node_id}")
-        self.active_node_ids.add(node_id)
+        previous_node_ids = set(self.active_node_ids)
+        next_active_node_ids = set(self.active_node_ids)
+        next_active_node_ids.add(node_id)
         self.current_plan = replan_distribution(
             current=self.current_plan,
-            nodes=self._active_profiles(),
+            nodes=[
+                self.node_profiles[candidate]
+                for candidate in NODE_ORDER
+                if candidate in next_active_node_ids
+            ],
             total_layers=TOTAL_LAYERS,
+            previous_node_ids=previous_node_ids,
         )
+        self.active_node_ids = next_active_node_ids
         self._refresh_loaded_state_from_plan(self.current_plan)
         self.last_action = f"join {node_id}"
         self.event_log.append(f"join: node={node_id}")
@@ -333,11 +341,14 @@ class ClusterDemoSession:
     def drop(self, node_id: str) -> str:
         if node_id not in self.active_node_ids:
             raise ValueError(f"node not active: {node_id}")
-        self.active_node_ids.remove(node_id)
-        if not self.active_node_ids:
+        previous_node_ids = set(self.active_node_ids)
+        next_active_node_ids = set(self.active_node_ids)
+        next_active_node_ids.remove(node_id)
+        if not next_active_node_ids:
             self.current_plan = None
             for nid in self.node_profiles:
                 self._set_loaded_shards(nid, [])
+            self.active_node_ids = next_active_node_ids
             self.last_action = f"drop {node_id}"
             self.event_log.append(f"drop: node={node_id}")
             return self.render_current(title=f"=== AFTER DROP {node_id} ===")
@@ -345,9 +356,15 @@ class ClusterDemoSession:
             raise ValueError("no current plan to replan from")
         self.current_plan = replan_distribution(
             current=self.current_plan,
-            nodes=self._active_profiles(),
+            nodes=[
+                self.node_profiles[candidate]
+                for candidate in NODE_ORDER
+                if candidate in next_active_node_ids
+            ],
             total_layers=TOTAL_LAYERS,
+            previous_node_ids=previous_node_ids,
         )
+        self.active_node_ids = next_active_node_ids
         self._refresh_loaded_state_from_plan(self.current_plan)
         self.last_action = f"drop {node_id}"
         self.event_log.append(f"drop: node={node_id}")

@@ -49,7 +49,8 @@ def test_json_mode_returns_parseable_required_fields(monkeypatch):
     )
 
     payload = scan_local_hardware.render_json(
-        scan_local_hardware.scan_local_node("node-b")
+        scan_local_hardware.scan_local_node("node-b"),
+        scan_wall_time_ms=12.345,
     )
     data = json.loads(payload)
 
@@ -58,6 +59,8 @@ def test_json_mode_returns_parseable_required_fields(monkeypatch):
     assert "effective_speed" in data
     assert "effective_capacity_blocks" in data
     assert "loaded_ranges" in data
+    assert data["scan_wall_time_ms"] == 12.345
+    assert list(data.keys())[-1] == "scan_wall_time_ms"
 
 
 def test_scan_uses_nodeinventory_snapshot_helper(monkeypatch):

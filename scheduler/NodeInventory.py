@@ -3,10 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import ctypes
 import math
+import os
 import platform
 import re
 import socket
 import subprocess
+import time
 
 import torch
 
@@ -165,8 +167,60 @@ def _detect_memory_gb() -> tuple[float, float]:
     return 0.0, 0.0
 
 
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes")
+
+
+def _sync_torch_device(device: torch.device) -> None:
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    elif device.type == "mps" and hasattr(torch.mps, "synchronize"):
+        torch.mps.synchronize()
+
+
+def _benchmark_matmul_gflops(device_type: str) -> float:
+    """Timed float32 GEMM; returns GFLOPS as the speed score (~100ms target on typical laptops)."""
+    if device_type == "cuda" and torch.cuda.is_available():
+        dev = torch.device("cuda")
+        n, warmup, repeats = 768, 1, 4
+    elif getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        dev = torch.device("mps")
+        n, warmup, repeats = 512, 1, 4
+    else:
+        dev = torch.device("cpu")
+        n, warmup, repeats = 352, 1, 4
+
+    dtype = torch.float32
+    a = torch.randn(n, n, device=dev, dtype=dtype)
+    b = torch.randn(n, n, device=dev, dtype=dtype)
+
+    with torch.inference_mode():
+        for _ in range(warmup):
+            _ = a @ b
+        _sync_torch_device(dev)
+
+        t0 = time.perf_counter()
+        for _ in range(repeats):
+            c = a @ b
+        _sync_torch_device(dev)
+        elapsed = time.perf_counter() - t0
+
+    del a, b, c
+    _sync_torch_device(dev)
+
+    flops = 2.0 * (n**3) * repeats
+    gflops = flops / max(elapsed, 1e-9) / 1e9
+    return max(float(gflops), 0.1)
+
+
 def benchmark_block_speed(device_type: str) -> float:
-    return 80.0 if device_type == "cuda" else 8.0
+    """Return a compute score (GFLOPS from one GEMM). Stub if PARAMIND_SKIP_HW_BENCH is set or on failure."""
+    if _env_flag("PARAMIND_SKIP_HW_BENCH"):
+        return 80.0 if device_type == "cuda" else 8.0
+    try:
+        return _benchmark_matmul_gflops(device_type)
+    except Exception:
+        return 80.0 if device_type == "cuda" else 8.0
 
 
 @dataclass(frozen=True)

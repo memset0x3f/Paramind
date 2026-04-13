@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import socket
 import sys
+import time
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -32,11 +33,15 @@ def render_text(node: NodeState) -> str:
     )
 
 
-def render_json(node: NodeState) -> str:
-    payload = node.to_dict()
+def render_json(node: NodeState, scan_wall_time_ms: float | None = None) -> str:
+    payload: dict = {}
+    for key, value in sorted(node.to_dict().items()):
+        payload[key] = value
     payload["effective_speed"] = node.effective_speed()
     payload["effective_capacity_blocks"] = node.effective_capacity_blocks()
-    return json.dumps(payload, indent=2, sort_keys=True)
+    if scan_wall_time_ms is not None:
+        payload["scan_wall_time_ms"] = round(scan_wall_time_ms, 3)
+    return json.dumps(payload, indent=2)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -56,11 +61,14 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+    t0 = time.perf_counter()
     node = scan_local_node(node_id=args.node_id, host=args.host)
+    scan_wall_time_ms = (time.perf_counter() - t0) * 1000.0
     if args.json:
-        print(render_json(node))
+        print(render_json(node, scan_wall_time_ms=scan_wall_time_ms))
     else:
         print(render_text(node))
+        print(f"scan_wall_time_ms={scan_wall_time_ms:.1f}")
 
 
 if __name__ == "__main__":

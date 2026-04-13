@@ -51,7 +51,10 @@ def test_join_allows_stronger_new_node_to_take_over_from_current_weakest_owner()
 
     assert "node-d | active=yes" in rendered
     assert session.current_plan is not None
-    assert [(assignment.node_id, assignment.start_layer, assignment.end_layer) for assignment in session.current_plan.assignments] == [
+    assert [
+        (assignment.node_id, assignment.start_layer, assignment.end_layer)
+        for assignment in session.current_plan.assignments
+    ] == [
         ("node-a", 0, 10),
         ("node-b", 10, 17),
         ("node-d", 17, 24),
@@ -74,7 +77,10 @@ def test_drop_reactivates_standby_node_after_local_absorption():
     assert session.node_profiles["node-d"].loaded_shards == []
     assert session.current_plan is not None
     assert session.active_node_ids == {"node-a", "node-b", "node-c"}
-    assert [(assignment.node_id, assignment.start_layer, assignment.end_layer) for assignment in session.current_plan.assignments] == [
+    assert [
+        (assignment.node_id, assignment.start_layer, assignment.end_layer)
+        for assignment in session.current_plan.assignments
+    ] == [
         ("node-a", 0, 10),
         ("node-b", 10, 18),
         ("node-c", 18, 24),

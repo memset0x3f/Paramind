@@ -104,8 +104,12 @@ def choose_coordinator(
         raise ValueError("At least one node profile is required")
     candidate_nodes = normalized_nodes
     if current_plan is not None and current_plan.assignments:
-        assigned_node_ids = {assignment.node_id for assignment in current_plan.assignments}
-        scoped = [node for node in normalized_nodes if node.node_id in assigned_node_ids]
+        assigned_node_ids = {
+            assignment.node_id for assignment in current_plan.assignments
+        }
+        scoped = [
+            node for node in normalized_nodes if node.node_id in assigned_node_ids
+        ]
         if scoped:
             candidate_nodes = scoped
     effective_total_layers = total_layers
@@ -319,7 +323,9 @@ def _annotate_plan_sources_from_current(
         dominant_owner = _dominant_owner(
             owner_by_layer, assignment.start_layer, assignment.end_layer
         )
-        source_node_id = None if dominant_owner == assignment.node_id else dominant_owner
+        source_node_id = (
+            None if dominant_owner == assignment.node_id else dominant_owner
+        )
         assignments.append(
             ShardAssignment(
                 node_id=assignment.node_id,
@@ -664,7 +670,9 @@ def plan_join_distribution(
         )
 
     standby_nodes = [
-        node for node in _sort_nodes_by_quality_desc(active_nodes) if node.node_id not in current_node_ids
+        node
+        for node in _sort_nodes_by_quality_desc(active_nodes)
+        if node.node_id not in current_node_ids
     ]
     if not standby_nodes:
         return current
@@ -830,7 +838,8 @@ def plan_drop_distribution(
     current_node_ids = {assignment.node_id for assignment in current.assignments}
 
     if current_node_ids.issubset(active_node_ids) and all(
-        _assignment_can_stay(assignment, node_by_id) for assignment in current.assignments
+        _assignment_can_stay(assignment, node_by_id)
+        for assignment in current.assignments
     ):
         return current
 

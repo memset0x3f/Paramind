@@ -46,13 +46,20 @@ def _set_dummy_signal_server(monkeypatch):
         all_special_ids = []
         eos_token_id = None
 
-        def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True):
+        def apply_chat_template(
+            self, messages, tokenize=False, add_generation_prompt=True
+        ):
             return ""
 
         def __call__(self, text, return_tensors="pt"):
             raise RuntimeError("Tokenizer call is not expected in scheduler tests")
 
-        def decode(self, token_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False):
+        def decode(
+            self,
+            token_ids,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False,
+        ):
             return ""
 
     monkeypatch.setattr(

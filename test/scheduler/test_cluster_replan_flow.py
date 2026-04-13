@@ -414,6 +414,7 @@ def test_coordinator_replan_can_shift_full_range_to_stronger_joining_node():
     new_plan = coordinator.replan(expanded_profiles)
 
     assert new_plan is not current
-    assert [(assignment.node_id, assignment.start_layer, assignment.end_layer) for assignment in new_plan.assignments] == [
-        ("node-c", 0, 24)
-    ]
+    assert [
+        (assignment.node_id, assignment.start_layer, assignment.end_layer)
+        for assignment in new_plan.assignments
+    ] == [("node-c", 0, 24)]

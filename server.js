@@ -67,7 +67,7 @@ class P2PSignalingServer {
     }
 
     handleRegister(ws, message, req) {
-        const { uuid, groupId, publicIp, publicPort, internalIp, internalPort } = message;
+        const { uuid, groupId, publicIp, publicPort, internalIp, internalPort, timestamp, profile } = message;
 
         if (!uuid || !groupId || !publicIp || !publicPort || !internalIp || !internalPort) {
             this.sendError(ws, 'Missing required fields: uuid, groupId, publicIp, publicPort, internalIp, internalPort');
@@ -88,6 +88,8 @@ class P2PSignalingServer {
               publicPort,
               internalIp,
               internalPort,
+              timestamp,
+              profile,
               lastSeen: Date.now()
           };
           
@@ -102,6 +104,7 @@ class P2PSignalingServer {
         console.log(`Client registered - UUID: ${uuid}, Group: ${groupId}`);
         console.log(`Public address: ${publicIp}:${publicPort}`);
         console.log(`Internal address: ${internalIp}:${internalPort}`);
+        console.log(`Profile: ${JSON.stringify(profile)}`);
         
         this.sendAllPeersToClient(uuid);
         
@@ -135,7 +138,9 @@ class P2PSignalingServer {
                         internal_address: {
                             ip: peer.internalIp,
                             port: peer.internalPort
-                        }
+                        },
+                        timestamp: peer.timestamp,
+                        profile: peer.profile
                     });
                 }
             }
@@ -173,7 +178,9 @@ class P2PSignalingServer {
                             internal_address: {
                                 ip: newClient.internalIp,
                                 port: newClient.internalPort
-                            }
+                            },
+                            timestamp: newClient.timestamp,
+                            profile: newClient.profile
                         },
                         group_id: groupId
                     };

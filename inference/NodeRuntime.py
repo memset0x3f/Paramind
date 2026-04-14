@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, cast
 
 from scheduler.ClusterTypes import (
     NodeReconfigurationAction,
@@ -406,11 +406,71 @@ class NodeRuntime:
         return result
 
     def handle_reconfiguration_commit(self, payload: dict):
+        coordinator_id = payload.get("coordinator_id")
+        if coordinator_id:
+            self.coordinator_id = str(coordinator_id)
         actions = self.handle_reconfiguration_plan(payload)
         if not actions:
             return []
         self.commit_reconfiguration(actions)
+        self._apply_reconfiguration_topology(payload)
         return actions
+
+    def _apply_reconfiguration_topology(self, payload: dict):
+        if payload.get("model_id") not in {None, self.model_id}:
+            return
+
+        raw_actions_by_node = payload.get("actions_by_node", {})
+        all_actions: list[NodeReconfigurationAction] = []
+        for raw_actions in raw_actions_by_node.values():
+            for item in raw_actions:
+                all_actions.append(NodeReconfigurationAction.from_dict(item))
+
+        if not all_actions:
+            return
+
+        assignments_by_shard: dict[tuple[int, int], ShardAssignment] = {
+            (assignment.start_layer, assignment.end_layer): assignment
+            for assignment in self.global_assignments
+        }
+
+        promoted_shards: set[tuple[int, int]] = set()
+        for action in all_actions:
+            shard_key = (action.start_layer, action.end_layer)
+            if action.action not in {"keep", "load", "move_in"}:
+                continue
+            promoted_shards.add(shard_key)
+            previous = assignments_by_shard.get(shard_key)
+            source_node_id = action.from_node_id
+            if (
+                source_node_id is None
+                and previous is not None
+                and previous.node_id != action.node_id
+            ):
+                source_node_id = previous.node_id
+            assignments_by_shard[shard_key] = ShardAssignment(
+                node_id=action.node_id,
+                start_layer=action.start_layer,
+                end_layer=action.end_layer,
+                role=action.role,
+                source_node_id=source_node_id,
+            )
+
+        for action in all_actions:
+            if action.action != "unload":
+                continue
+            shard_key = (action.start_layer, action.end_layer)
+            if shard_key in promoted_shards:
+                continue
+            current = assignments_by_shard.get(shard_key)
+            if current is not None and current.node_id == action.node_id:
+                assignments_by_shard.pop(shard_key, None)
+
+        self.global_assignments = sorted(
+            assignments_by_shard.values(),
+            key=lambda assignment: assignment.start_layer,
+        )
+        self._update_route()
 
     def handle_reconfiguration_ready(self, payload: dict):
         if not self.is_coordinator or self.coordinator is None:
@@ -454,7 +514,8 @@ class NodeRuntime:
             if reconfiguration_id is None:
                 return self.on_ready(self.node_id)
             try:
-                return self.on_ready(self.node_id, reconfiguration_id)
+                callback = cast(Callable[..., Any], self.on_ready)
+                return callback(self.node_id, reconfiguration_id)
             except TypeError:
                 return self.on_ready(self.node_id)
         return None

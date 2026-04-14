@@ -146,7 +146,7 @@ class P2PClient:
                 if jsonData is None:
                     continue
                 jsonData["_source_addr"] = addr
-                logger.info(f"Received UDP message from {addr}: {jsonData['type']}")
+                # logger.info(f"Received UDP message from {addr}: {jsonData['type']}")
                 complete = self.peerSocket.handle_torch_datagram(jsonData)
                 if complete is None:
                     continue
@@ -161,7 +161,7 @@ class P2PClient:
                 continue
 
             jsonData["_source_addr"] = addr
-            logger.info(f"Received UDP message from {addr}: {jsonData['type']}")
+            # logger.info(f"Received UDP message from {addr}: {jsonData['type']}")
             if jsonData["type"] == "nackRequest":
                 self.peerSocket.handle_nack_request(jsonData)
                 continue

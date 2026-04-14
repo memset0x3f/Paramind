@@ -211,6 +211,17 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
+# Local model weights: keep layout docs only (see models/README.md)
+models/*
+!models/README.md
+!models/.gitkeep
+!models/registry.copy.json
+!models/__init__.py
+!models/resolve.py
+!models/model_info.py
+!models/profiles/
+!models/profiles/*.json
+
 # ParaMind desktop app — local dev databases and Playwright output (do not commit)
 paramind/apps/desktop/.paramind-local/
 paramind/apps/desktop/test-results/

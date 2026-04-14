@@ -1,0 +1,5 @@
+{
+  "Qwen/Qwen2.5-0.5B-Instruct": {
+    "path": "/absolute/path/to/Qwen__Qwen2.5-0.5B-Instruct"
+  }
+}

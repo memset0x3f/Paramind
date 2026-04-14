@@ -8,6 +8,8 @@ import torch.nn as nn
 from safetensors.torch import load_file
 from transformers import AutoConfig, AutoModelForCausalLM
 
+from models.resolve import resolve_weights_dir
+
 from .ShardConfig import ShardConfig, ModelFamily
 from .ModelRegistry import ModelRegistry
 
@@ -348,11 +350,15 @@ class ShardLoader:
         return module.to(device=self.device, dtype=target_dtype)
 
     def _resolve_model_path(self) -> str:
-        """Find model on disk (HuggingFace cache or modelscope)."""
+        """Find model on disk: explicit dir, repo ``models/`` layout, then Hub cache."""
         from huggingface_hub import snapshot_download
 
         if os.path.isdir(self.config.model_id):
             return self.config.model_id
+
+        local = resolve_weights_dir(self.config.model_id)
+        if local is not None:
+            return str(local)
 
         return snapshot_download(
             self.config.model_id,

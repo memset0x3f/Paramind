@@ -366,6 +366,7 @@ def plan_static_distribution(
 
     layer_work = _layer_work(total_layers, layer_work)
     total_capacity = sum(node.effective_capacity_blocks() for node in active_nodes)
+    print(f"Total layers: {total_layers}, Total capacity: {total_capacity}")
     if total_capacity < total_layers:
         raise ValueError("Insufficient cluster capacity for total layers")
 

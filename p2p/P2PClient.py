@@ -126,9 +126,9 @@ class P2PClient:
     ):
         self.peerSocket.send_to_peer(message, peer_uuid)
 
-    def broadcast(self, message):
+    def broadcast(self, message, include_self=False):
         for peer_uuid in self.peerInfo:
-            if peer_uuid == str(self.info.uuid):
+            if peer_uuid == str(self.info.uuid) and not include_self:
                 continue
             self.sendToPeer(message, peer_uuid)
 
@@ -267,60 +267,6 @@ class P2PClient:
         self.signalServerWs.send(json.dumps(holePunchMessage))
         self._sendHolePunchMsg(targetPeer)
 
-    # def infer(self, prompt: str):
-    #     messages = [
-    #         {"role": "system", "content": "You are a helpful assistant."},
-    #         {"role": "user", "content": prompt},
-    #     ]
-    #     text = self.tokenizer.apply_chat_template(
-    #         messages, tokenize=False, add_generation_prompt=True
-    #     )
-    #     input = self.tokenizer(text, return_tensors="pt").input_ids
-    #     input = input.to(self.device)
-    #     self.kvCache = None
-    #     response = ""
-    #     with torch.no_grad():
-    #         step = 0
-    #         while step < 50:
-    #             hidden_states, self.kvCache = self.model.forward(
-    #                 input, past_key_values=self.kvCache
-    #             )
-    #             peer = list(self.peerInfo.values())[0]
-    #             active_addr = peer.get_active_address()
-    #             # print(
-    #             #     f"Step {step}, Hidden States Shape: {hidden_states.shape}. Sending to peer {active_addr[0]}:{active_addr[1]}..."
-    #             # )
-    #             self.peerSocket.send_to_peer(
-    #                 hidden_states.cpu(),
-    #                 str(peer.uuid),
-    #                 input=True,
-    #             )
-
-    #             next_token_id = self.tokenQueue.get()  # LongTensor [1, 1]
-    #             # next_token_id 可能是标量或tensor，需要统一处理
-    #             if not torch.is_tensor(next_token_id):
-    #                 next_token_id = torch.tensor([[next_token_id]], dtype=torch.long)
-    #             elif next_token_id.dim() == 0:
-    #                 next_token_id = next_token_id.unsqueeze(0).unsqueeze(0)
-
-    #             # 提取标量值用于解码和EOS检查
-    #             token_value = next_token_id.squeeze().item()
-    #             word = self.tokenizer.decode([token_value])
-    #             response += word
-    #             print(word, end="", flush=True)  # 流式输出到屏幕
-
-    #             # 检查是否是结束符 (EOS)
-    #             eos_token_id = self.tokenizer.eos_token_id
-    #             if token_value == eos_token_id:
-    #                 print("\nGenerated EOS.")
-    #                 break
-
-    #             # 准备下一轮输入：确保next_token_id是[1, 1]形状且在正确的device上
-    #             next_token_id = next_token_id.to(self.device)
-    #             input = next_token_id
-    #             step += 1
-    #     # print(f"Response: {response}")
-
     def _sendHolePunchMsg(self, targetPeer: PeerInfo):
         logger.info(
             f"Sending hole punch message to peer {targetPeer.uuid} at public {targetPeer.public_ip}:{targetPeer.public_port} and internal {targetPeer.internal_ip}:{targetPeer.internal_port}"
@@ -385,6 +331,8 @@ class P2PClient:
 
     @_signalServerHandlers.register("newPeer")
     def _handleNewPeer(self, data):
+        if self.runtimeHandlers.get("newPeer") is not None:
+            self.runtimeHandlers["newPeer"](data)
         newPeer = data["peer"]
         pub_addr = newPeer.get("public_address", {})
         int_addr = newPeer.get("internal_address", {})
@@ -397,9 +345,6 @@ class P2PClient:
         )
         logger.info(f"New peer joined: {newPeer}")
         self.holePunch(self.peerInfo[newPeer["uuid"]])
-
-        if self.runtimeHandlers.get("newPeer") is not None:
-            self.runtimeHandlers["newPeer"](data)
 
     @_signalServerHandlers.register("punchNotification")
     def _handlePunchNotification(self, data):

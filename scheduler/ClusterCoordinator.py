@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import itertools
+import json
 import time
 
 from scheduler.ClusterPlanner import (
@@ -135,29 +136,35 @@ class ClusterCoordinator:
             for assignment in ordered_assignments
         }
         self.transport.broadcast(
-            "cluster_plan",
-            {
-                "model_id": plan.model_id,
-                "coordinator_id": plan.coordinator_id,
-                "assignments": [asdict(a) for a in plan.assignments],
-                "route": route,
-                "shard_owner_index": shard_owner_index,
-            },
+            json.dumps(
+                {
+                    "type": "cluster_plan",
+                    "model_id": plan.model_id,
+                    "coordinator_id": plan.coordinator_id,
+                    "assignments": [asdict(a) for a in plan.assignments],
+                    "route": route,
+                    "shard_owner_index": shard_owner_index,
+                }
+            ).encode("utf-8"),
+            include_self=True,
         )
 
     def broadcast_reconfiguration(self, reconfiguration: ReconfigurationPlan):
         if self.transport is None:
             raise RuntimeError("No transport configured for cluster broadcasts")
         self.transport.broadcast(
-            "cluster_reconfigure",
-            {
-                "model_id": reconfiguration.model_id,
-                "coordinator_id": reconfiguration.coordinator_id,
-                "actions_by_node": {
-                    node_id: [action.to_dict() for action in actions]
-                    for node_id, actions in reconfiguration.actions_by_node.items()
-                },
-            },
+            json.dumps(
+                {
+                    "type": "cluster_reconfigure",
+                    "model_id": reconfiguration.model_id,
+                    "coordinator_id": reconfiguration.coordinator_id,
+                    "actions_by_node": {
+                        node_id: [action.to_dict() for action in actions]
+                        for node_id, actions in reconfiguration.actions_by_node.items()
+                    },
+                }
+            ).encode("utf-8"),
+            include_self=True,
         )
 
     def begin_reconfiguration(self, reconfiguration: ReconfigurationPlan):
@@ -172,15 +179,18 @@ class ClusterCoordinator:
         self.commit_started_at = None
         self.completed_at = None
         self.transport.broadcast(
-            "cluster_reconfigure_prepare",
-            {
-                "model_id": reconfiguration.model_id,
-                "coordinator_id": reconfiguration.coordinator_id,
-                "actions_by_node": {
-                    node_id: [action.to_dict() for action in actions]
-                    for node_id, actions in reconfiguration.actions_by_node.items()
-                },
-            },
+            json.dumps(
+                {
+                    "type": "cluster_reconfigure_prepare",
+                    "model_id": reconfiguration.model_id,
+                    "coordinator_id": reconfiguration.coordinator_id,
+                    "actions_by_node": {
+                        node_id: [action.to_dict() for action in actions]
+                        for node_id, actions in reconfiguration.actions_by_node.items()
+                    },
+                }
+            ).encode("utf-8"),
+            include_self=True,
         )
 
     def mark_reconfig_ready(self, node_id: str):
@@ -192,15 +202,18 @@ class ClusterCoordinator:
             self.phase = "commit"
             self.commit_started_at = time.time()
             self.transport.broadcast(
-                "cluster_reconfigure_commit",
-                {
-                    "model_id": self.pending_reconfiguration.model_id,
-                    "coordinator_id": self.pending_reconfiguration.coordinator_id,
-                    "actions_by_node": {
-                        peer_node_id: [action.to_dict() for action in actions]
-                        for peer_node_id, actions in self.pending_reconfiguration.actions_by_node.items()
-                    },
-                },
+                json.dumps(
+                    {
+                        "type": "cluster_reconfigure_commit",
+                        "model_id": self.pending_reconfiguration.model_id,
+                        "coordinator_id": self.pending_reconfiguration.coordinator_id,
+                        "actions_by_node": {
+                            peer_node_id: [action.to_dict() for action in actions]
+                            for peer_node_id, actions in self.pending_reconfiguration.actions_by_node.items()
+                        },
+                    }
+                ).encode("utf-8"),
+                include_self=True,
             )
             self.reconfiguration_committed = True
             self.completed_at = time.time()

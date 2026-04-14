@@ -119,11 +119,22 @@ class NodeRuntime:
         )
 
     def handle_newPeer(self, payload: dict):
-        peer_id = payload.get("uuid")
+        peer = payload["peer"]
+        peer_id = peer.get("uuid")
         if peer_id and peer_id != self.node_id:
-            profile_dict = payload.get("profile", {})
+            profile_dict = peer.get("profile", {})
             self.peer_profiles[peer_id] = NodeProfile.from_dict(profile_dict)
             logger.info(f"New peer connected: {peer_id} with profile {profile_dict}")
+
+        if self.is_coordinator:
+            assert (
+                self.coordinator is not None
+            ), "Coordinator instance should be initialized"
+            plan = self.coordinator.build_plan(
+                profiles=list(self.peer_profiles.values())
+            )
+            self.coordinator.broadcast_plan(plan)
+            # self._update_route()
 
     def handle_allPeers(self, payload: dict):
         peers = payload.get("peers", [])
@@ -144,6 +155,21 @@ class NodeRuntime:
             self.is_coordinator = True
             logger.info("Node %s initialized as coordinator", self.node_id)
 
+        if self.is_coordinator:
+            assert (
+                self.coordinator is not None
+            ), "Coordinator instance should be initialized"
+            plan = self.coordinator.build_plan(
+                profiles=list(self.peer_profiles.values())
+            )
+            self.coordinator.broadcast_plan(plan)
+            # self.global_assignments = plan.assignments
+            # for assignment in self.global_assignments:
+            #     if assignment.node_id == self.node_id:
+            #         self.assignment = assignment
+            # self.apply_assignment(model_id=self.model_id, assignment=self.assignment)
+            # self._update_route()
+
     def _select_assignment(self, payload: dict) -> ShardAssignment | None:
         for item in payload.get("assignments", []):
             if item.get("node_id") == self.node_id:
@@ -155,6 +181,20 @@ class NodeRuntime:
                     source_node_id=item.get("source_node_id"),
                 )
         return None
+
+    def _update_route(self):
+        ordered = sorted(
+            self.global_assignments,
+            key=lambda assignment: assignment.start_layer,
+        )
+        self.route = [assignment.node_id for assignment in ordered]
+        self.shard_owner_index = {
+            f"{assignment.start_layer}-{assignment.end_layer}": assignment.node_id
+            for assignment in ordered
+        }
+        logger.info(
+            f"Updated route: {self.route} and shard owner index: {self.shard_owner_index}"
+        )
 
     def _extract_global_assignments(self, payload: dict) -> list[ShardAssignment]:
         assignments: list[ShardAssignment] = []
@@ -293,6 +333,7 @@ class NodeRuntime:
             )
         )
         self.signal_ready()
+        logger.info(f"Received cluster plan, new route: {self.route}")
         return assignment
 
     def handle_reconfiguration_plan(self, payload: dict):
@@ -343,9 +384,6 @@ class NodeRuntime:
             total_layers=self.total_layers,
         )
         self.local_shard = ShardLoader(config, device=self.device).load()
-
-    def load_assignment(self, model_id: str, assignment: ShardAssignment):
-        self.apply_assignment(model_id, assignment)
 
     def prepare_reconfiguration(
         self, model_id: str, actions: list[NodeReconfigurationAction]

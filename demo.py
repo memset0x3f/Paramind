@@ -55,20 +55,20 @@ def main() -> int:
     split = total_layers // 2
 
     node_id = build_node_id(args.group, args.node_index)
-    if args.node_index == 1:
-        assignment = ShardAssignment(
-            node_id=str(node_id),
-            start_layer=0,
-            end_layer=split,
-            role="first",
-        )
-    else:
-        assignment = ShardAssignment(
-            node_id=str(node_id),
-            start_layer=split,
-            end_layer=total_layers,
-            role="last",
-        )
+    # if args.node_index == 1:
+    #     assignment = ShardAssignment(
+    #         node_id=str(node_id),
+    #         start_layer=0,
+    #         end_layer=split,
+    #         role="first",
+    #     )
+    # else:
+    #     assignment = ShardAssignment(
+    #         node_id=str(node_id),
+    #         start_layer=split,
+    #         end_layer=total_layers,
+    #         role="last",
+    #     )
 
     runtime = NodeRuntime(
         node_id=node_id,
@@ -76,25 +76,25 @@ def main() -> int:
         family=family,
         total_layers=total_layers,
         model_id=args.model_id,
-        shard_assignment=assignment,
+        # shard_assignment=assignment,
         device=args.device,
     )
 
     runtime.run()
-    LOGGER.info(
-        "Node %s ready with assignment %s-%s",
-        runtime.node_id,
-        assignment.start_layer,
-        assignment.end_layer,
-    )
+    # LOGGER.info(
+    #     "Node %s ready with assignment %s-%s",
+    #     runtime.node_id,
+    #     assignment.start_layer,
+    #     assignment.end_layer,
+    # )
 
     if args.node_index == 1:
         # Wait for the second node to join
         while len(runtime.p2p_client.peerInfo) < 2:
             time.sleep(1)
-        peer_ids = sorted(runtime.p2p_client.peerInfo.keys())
 
-        runtime.route = [runtime.node_id, peer_ids[1 - peer_ids.index(runtime.node_id)]]
+        # peer_ids = sorted(runtime.p2p_client.peerInfo.keys())
+        # runtime.route = [runtime.node_id, peer_ids[1 - peer_ids.index(runtime.node_id)]]
 
         # Current NodeRuntime loop can continue generation for many rounds;
         # broaden EOS ids so cooperation test converges quickly.

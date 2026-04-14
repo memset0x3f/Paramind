@@ -2,13 +2,13 @@
 
 ## 文件结构
 
-`scheduler/` 负责 **节点画像、placement、replan、coordinator、cluster-level orchestration**。它不负责 shard 权重加载和本地执行，也不负责真实 transport。
+`scheduler/` 负责 **节点画像、placement、replan 与 cluster-level orchestration**。它不负责 shard 权重加载和本地执行，也不负责真实 transport。
 
 ```text
 scheduler/
 ├── __init__.py
 ├── ClusterTypes.py         # NodeProfile / PlacementPlan / ReconfigurationPlan
-├── ClusterPlanner.py       # static planning / DP replanning / diff helper / metrics
+├── ClusterPlanner.py       # static planning / join-drop replanning / diff helper
 ├── ClusterCoordinator.py   # plan / replan / prepare / commit / barrier
 ├── NodeInventory.py        # NodeState / ClusterState / 本机节点快照
 ├── DeviceProfile.py        # 兼容旧 NodeProfile 的 profile helper
@@ -18,16 +18,22 @@ test/scheduler/
 ├── test_cluster_coordinator.py
 ├── test_cluster_planner_demo.py
 ├── test_cluster_replan_flow.py
-├── test_coordinator_metrics.py
 ├── test_device_profile.py
 ├── test_dp_cluster_planner.py
 ├── test_node_inventory.py
 ├── test_scan_local_hardware.py
 ├── test_static_cluster_planner.py
-└── test_sticky_replanner.py
+├── test_model_resolve.py
 ```
 
-如果你关心的是“谁负责哪段层、join/leave 后如何变、哪个节点更适合当 coordinator”，应该先看这里，而不是 `inference/`。
+如果你关心的是“谁负责哪段层、join/leave 后如何变”，应该先看这里，而不是 `inference/`。
+
+## 本地权重路径（`model_resolve`）
+
+- 模型路径配置位于 [`models/registry.json`](../models/registry.json)：每个 `model_id` 映射到绝对 `path`（相对路径会直接报错）。
+- 解析逻辑位于 `models/resolve.py`，模型信息接口位于 `models/model_info.py`。
+- `ShardLoader` 在 `model_id` 不是已有目录时，会先 `resolve_weights_dir`，再回退 Hub `snapshot_download`。
+- planner 需要的 profile 由 `models.ensure_model_profile(model_id)` 生成与缓存到 `models/profiles/`。
 
 ## 关键接口
 
@@ -55,12 +61,12 @@ NodeState -> PlacementPlan -> ReconfigurationPlan
 最关键的 planner 接口是：
 
 - `plan_static_distribution(...)`
+- `plan_membership_stable_distribution(...)`
+- `plan_join_distribution(...)`
+- `plan_drop_distribution(...)`
+- `compute_next_plan(...)`
 - `replan_distribution(...)`
 - `diff_assignment_changes(...)`
-- `choose_coordinator(...)`
-- `coordinator_score(...)`
-- `estimate_reference_stage_width(...)`
-- `estimate_stage_time_for_node(...)`
 
 如果以后要做更高级的分配算法，这些函数就是最自然的替换点。
 
@@ -99,7 +105,6 @@ NodeState -> PlacementPlan -> ReconfigurationPlan
 - 哪些节点参与
 - 每个节点承载哪些连续 shard
 - 旧 plan 和新 plan 的差值是什么
-- coordinator 如何选择与推进重配置阶段
 
 它不负责：
 
@@ -109,7 +114,7 @@ NodeState -> PlacementPlan -> ReconfigurationPlan
 
 ### 2. cold start 与 replan
 
-当前 cold start 是连续切分 planner，目标是最小化 bottleneck stage time；replan 则在这个基础上加上迁移代价和边界稳定性约束。sticky replanning、loaded shard 偏好、coordinator metrics 都已经体现在这一层，而不是执行层。
+当前 cold start 采用质量优先的 greedy 连续切分：更强节点先吃，下一整层吃不下就停。join 与 drop 也都保持按层连续调整，并用真实字节预算检查可行性；planner 不再维护 reference-stage、coordinator score 或 block-capacity 这类旧评分体系。
 
 ### 3. prepare / commit 与执行层的关系
 

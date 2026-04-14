@@ -48,6 +48,7 @@ class PeerInfo(Site):
         isConnected: bool = False,
         internal_ip: Optional[str] = None,
         internal_port: Optional[int] = None,
+        timestamp: Optional[float] = None,
     ):
         # Use public address as default (for backward compatibility)
         super().__init__(ip, port)
@@ -59,6 +60,7 @@ class PeerInfo(Site):
         self.internal_ip = internal_ip
         self.internal_port = internal_port
         self.active_endpoint = None  # 'public', 'internal', or None
+        self.timestamp = timestamp
 
     def isValid(self) -> bool:
         return self.uuid is not None and (

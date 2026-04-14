@@ -64,24 +64,6 @@ class P2PClient:
 
         self.hasRecievedAllPeers = False
 
-        # self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        # self.modelPath = snapshot_download("Qwen/Qwen2.5-0.5B-Instruct")
-        # self.model = QwenSlice(
-        #     self.modelPath, modelLayer[0], modelLayer[1], device=self.device
-        # )
-        # self.kvCache: Optional[torch.Tensor] = None
-        # self.tokenizer = AutoTokenizer.from_pretrained(
-        #     self.modelPath, trust_remote_code=True
-        # )
-        # self.tokenQueue = queue.Queue()
-        # self.torchInputQueue = queue.Queue(maxsize=self._TORCH_INPUT_QUEUE_SIZE)
-
-        # self.torchInputWorkerThread = threading.Thread(
-        #     target=self._processTorchInput,
-        #     daemon=True,
-        # )
-        # self.torchInputWorkerThread.start()
-
         self.recvThread = threading.Thread(target=self.recvPeerMessage, daemon=True)
         self.recvThread.start()
 
@@ -212,6 +194,7 @@ class P2PClient:
         assert self.signalServerWs is not None
 
         profile_dict = node_profile.to_dict()
+        self.info.timestamp = time.time()
 
         registerMessage = {
             "type": "register",
@@ -221,7 +204,7 @@ class P2PClient:
             "publicPort": self.info.port,
             "internalIp": self.info.internal_ip,
             "internalPort": self.info.internal_port,
-            "timestamp": time.time(),
+            "timestamp": self.info.timestamp,
             "profile": profile_dict,
         }
         self.signalServerWs.send(json.dumps(registerMessage))
@@ -305,6 +288,7 @@ class P2PClient:
                 uuid=uuid.UUID(peer["uuid"]),
                 internal_ip=int_addr.get("ip"),
                 internal_port=int_addr.get("port"),
+                timestamp=peer.get("timestamp", 0),
             )
 
         self_uuid = str(self.info.uuid)
@@ -316,6 +300,7 @@ class P2PClient:
                 isConnected=True,
                 internal_ip=self.info.internal_ip,
                 internal_port=self.info.internal_port,
+                timestamp=self.info.timestamp,
             )
         self_peer = self.peerInfo[self_uuid]
         if self_peer.internal_ip and self_peer.internal_port:
@@ -421,36 +406,18 @@ class P2PClient:
             f"Established P2P connection with peer {peer.uuid} via {peer.get_active_address()}"
         )
 
-    # @_peerHandlers.register("torchInput")
-    # def _handlePeerTorchInput(self, data):
-    #     peerUuid = data["uuid"]
-    #     tensorData = data["tensor"]
-    #     logger.info(f"Received torch data from peer {peerUuid}")
-
-    #     tensorData = tensorData.to(self.device)
-    #     with torch.no_grad():
-    #         logits, self.kvCache = self.model.forward(
-    #             tensorData, past_key_values=self.kvCache
-    #         )
-
-    #         # 3. Greedy Decoding (取最大概率)
-    #         # logits: [Batch, Seq, Vocab] -> 取最后一个 token
-    #         next_token_logits = logits[:, -1, :]
-    #         next_token_id = torch.argmax(next_token_logits, dim=-1).unsqueeze(
-    #             0
-    #         )  # [1, 1]
-
-    #     self.peerSocket.send_to_peer(
-    #         next_token_id.cpu(),
-    #         peerUuid,
-    #         input=False,
-    #     )
-
-    # @_peerHandlers.register("torchOutput")
-    # def _handlePeerTorchOutput(self, data):
-    #     tensorData = data["tensor"]
-    #     logger.info(f"Received torch output from peer {data['uuid']}: {tensorData}")
-    #     self.tokenQueue.put(tensorData)
+    @_signalServerHandlers.register("peerDisconnected")
+    def _handlePeerDisconnect(self, data):
+        if self.runtimeHandlers.get("peerDisconnected") is not None:
+            self.runtimeHandlers["peerDisconnected"](data)
+        peerUuid = data["uuid"]
+        if peerUuid in self.peerInfo:
+            del self.peerInfo[peerUuid]
+            logger.info(f"Peer {peerUuid} disconnected and removed from peerInfo")
+        else:
+            logger.warning(
+                f"Received disconnect notification for unknown peer {peerUuid}"
+            )
 
     def _onOpen(self, ws):
         self.isConnectedToSignalServer = True

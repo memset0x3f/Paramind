@@ -72,6 +72,7 @@ class NodeRuntime:
             self.eos_ids.add(self.tokenizer.eos_token_id)
 
         self.coordinator = None
+        self.coordinator_id = None
         self.is_coordinator = False
         self.profile = build_node_profile(self.node_id)
         self.peer_profiles: dict[str, NodeProfile] = {self.node_id: self.profile}
@@ -79,6 +80,9 @@ class NodeRuntime:
     def _register_handlers(self):
         self.p2p_client.register_handler("allPeers", self.handle_allPeers)
         self.p2p_client.register_handler("newPeer", self.handle_newPeer)
+        self.p2p_client.register_handler(
+            "peerDisconnected", self.handle_peerDisconnected
+        )
         self.p2p_client.register_handler("cluster_plan", self.handle_cluster_plan)
         self.p2p_client.register_handler(
             "cluster_reconfigure_prepare", self.handle_reconfiguration_prepare
@@ -162,26 +166,61 @@ class NodeRuntime:
             if peer_id and peer_id != self.node_id:
                 profile_dict = peer.get("profile", {})
                 self.peer_profiles[peer_id] = NodeProfile.from_dict(profile_dict)
-        if len(peers) == 0 or (len(peers) == 1 and str(self.node_id) in peers):
+        if len(peers) > 0:
+            sorted_peers = sorted(peers, key=lambda p: p.get("timestamp"))
+            self.coordinator_id = sorted_peers[0].get("uuid")
+
+        if len(peers) == 0 or self.coordinator_id == self.node_id:
+            self._init_coordinator()
             assert (
-                self.coordinator is None
-            ), "Coordinator should not exist before allPeers message"
-            self.coordinator = ClusterCoordinator(
-                transport=self.p2p_client,
-                model_id=self.model_id,
-                total_layers=self.total_layers,
+                self.coordinator is not None
+            ), "Coordinator instance should be initialized"
+
+            plan = self.coordinator.build_plan(
+                profiles=list(self.peer_profiles.values())
             )
-            self.is_coordinator = True
-            logger.info("Node %s initialized as coordinator", self.node_id)
+            self.coordinator.broadcast_plan(plan)
+
+    def handle_peerDisconnected(self, payload: dict):
+        peer_id = payload.get("peer_uuid")
+        if peer_id and peer_id in self.peer_profiles:
+            self.peer_profiles.pop(peer_id)
+            logger.info(f"Peer disconnected: {peer_id}")
 
         if self.is_coordinator:
             assert (
                 self.coordinator is not None
             ), "Coordinator instance should be initialized"
-            plan = self.coordinator.build_plan(
+            reconfig = self.coordinator.build_reconfiguration(
                 profiles=list(self.peer_profiles.values())
             )
-            self.coordinator.broadcast_plan(plan)
+            self.coordinator.begin_reconfiguration(reconfig)
+
+        if peer_id == self.coordinator_id:
+            logger.warning(
+                "Coordinator has disconnected, triggering new coordinator election"
+            )
+            peer_timestamps = [
+                (uuid, peer.timestamp)
+                for uuid, peer in self.p2p_client.peerInfo.items()
+            ]
+            if peer_timestamps:
+                self.coordinator_id = min(peer_timestamps, key=lambda x: x[1])[0]
+                if self.coordinator_id == self.node_id:
+                    self._init_coordinator()
+
+    def _init_coordinator(self):
+        assert (
+            self.coordinator is None
+        ), "Coordinator should not exist before allPeers message"
+        self.coordinator = ClusterCoordinator(
+            transport=self.p2p_client,
+            model_id=self.model_id,
+            total_layers=self.total_layers,
+        )
+        self.is_coordinator = True
+        self.coordinator_id = self.node_id
+        logger.info("Node %s initialized as coordinator", self.node_id)
 
     def _select_assignment(self, payload: dict) -> ShardAssignment | None:
         for item in payload.get("assignments", []):

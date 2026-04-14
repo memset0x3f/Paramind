@@ -1,8 +1,9 @@
 import pytest
 
 from scheduler.ClusterCoordinator import ClusterCoordinator
+from scheduler.ClusterPlanner import range_bytes
 from scheduler.ClusterTypes import (
-    NodeProfile,
+    NodeProfile as _NodeProfile,
     NodeReconfigurationAction,
     ReconfigurationPlan,
     ShardAssignment,
@@ -10,6 +11,15 @@ from scheduler.ClusterTypes import (
 from inference.NodeRuntime import NodeRuntime
 from inference.ShardConfig import ModelFamily
 from inference.ShardRegistry import ShardRecord
+
+MODEL_ID = "Qwen/Qwen2.5-0.5B-Instruct"
+TOTAL_LAYERS = 24
+_DEFAULT_TEST_BUDGET = range_bytes(MODEL_ID, 0, TOTAL_LAYERS, TOTAL_LAYERS)
+
+
+def NodeProfile(*args, **kwargs):
+    kwargs.setdefault("max_usable_bytes", _DEFAULT_TEST_BUDGET)
+    return _NodeProfile(*args, **kwargs)
 
 
 class FakeTransport:
@@ -41,6 +51,10 @@ class FakeLoader:
 @pytest.fixture(autouse=True)
 def _set_dummy_signal_server(monkeypatch):
     monkeypatch.setenv("PARAMIND_SIGSERVER", "ws://127.0.0.1:9999")
+    monkeypatch.setattr(
+        "inference.NodeRuntime.P2PClient._queryStunInfo",
+        staticmethod(lambda port: ("MockedNAT", "127.0.0.1", port)),
+    )
 
     class _FakeTokenizer:
         all_special_ids = []
@@ -77,8 +91,8 @@ def test_coordinator_broadcasts_plan_after_collecting_profiles():
     )
 
     profiles = [
-        NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28, 28),
-        NodeProfile("node-b", "10.0.0.2", "cpu", 32, 24, 24),
+        NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28),
+        NodeProfile("node-b", "10.0.0.2", "cpu", 32, 24),
     ]
 
     plan = coordinator.build_plan(profiles)
@@ -97,8 +111,8 @@ def test_coordinator_broadcast_plan_includes_route_and_shard_owner_index():
     )
 
     profiles = [
-        NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28, 28),
-        NodeProfile("node-b", "10.0.0.2", "cpu", 32, 24, 24),
+        NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28),
+        NodeProfile("node-b", "10.0.0.2", "cpu", 32, 24),
     ]
     plan = coordinator.build_plan(profiles)
 
@@ -123,8 +137,8 @@ def test_coordinator_build_plan_accepts_profile_payloads():
         total_layers=24,
     )
     payloads = [
-        NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28, 28).to_dict(),
-        NodeProfile("node-b", "10.0.0.2", "cpu", 32, 24, 24).to_dict(),
+        NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28).to_dict(),
+        NodeProfile("node-b", "10.0.0.2", "cpu", 32, 24).to_dict(),
     ]
 
     plan = coordinator.build_plan(payloads)
@@ -196,7 +210,7 @@ def test_transport_driven_cluster_plan_marks_ready():
 
     plan = coordinator.build_plan(
         [
-            NodeProfile("node-b", "10.0.0.2", "cpu", 32, 24, 24),
+            NodeProfile("node-b", "10.0.0.2", "cpu", 32, 24),
         ]
     )
 
@@ -227,8 +241,8 @@ def test_node_runtime_persists_global_shard_route_and_owner_index_from_plan():
 
     plan = coordinator.build_plan(
         [
-            NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28, 28),
-            NodeProfile("node-b", "10.0.0.2", "cpu", 32, 24, 24),
+            NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28),
+            NodeProfile("node-b", "10.0.0.2", "cpu", 32, 24),
         ]
     )
     coordinator.broadcast_plan(plan)
@@ -273,15 +287,21 @@ def test_multi_runtime_static_cluster_smoke():
 
     plan = coordinator.build_plan(
         [
-            NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28, 28),
-            NodeProfile("node-b", "10.0.0.2", "cpu", 32, 24, 24),
+            NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28),
+            NodeProfile("node-b", "10.0.0.2", "cpu", 32, 24),
         ]
     )
 
     coordinator.broadcast_plan(plan)
 
-    assert loaders["node-a"].loaded == plan.assignments[0]
-    assert loaders["node-b"].loaded == plan.assignments[1]
+    expected_by_node = {
+        assignment.node_id: assignment for assignment in plan.assignments
+    }
+    for node_id, loader in loaders.items():
+        if node_id in expected_by_node:
+            assert loader.loaded == expected_by_node[node_id]
+        else:
+            assert loader.loaded is None
     assert coordinator.all_ready(plan) is True
     assert coordinator.wait_for_ready(plan, timeout_seconds=0.1) is True
     assert len(transport.sent) == 1
@@ -295,8 +315,8 @@ def test_static_cluster_can_plan_load_and_mark_ready():
     )
     plan = coordinator.build_plan(
         [
-            NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28, 28),
-            NodeProfile("node-b", "10.0.0.2", "cpu", 32, 24, 24),
+            NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28),
+            NodeProfile("node-b", "10.0.0.2", "cpu", 32, 24),
         ]
     )
 
@@ -363,30 +383,124 @@ def test_coordinator_broadcasts_reconfiguration_payload():
 
     coordinator.build_plan(
         [
-            NodeProfile(
-                "node-a", "10.0.0.1", "cpu", 32, 28, 28, loaded_shards=[(0, 12)]
-            ),
-            NodeProfile(
-                "node-b", "10.0.0.2", "cpu", 32, 24, 24, loaded_shards=[(12, 24)]
-            ),
+            NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28, loaded_shards=[(0, 12)]),
+            NodeProfile("node-b", "10.0.0.2", "cpu", 32, 24, loaded_shards=[(12, 24)]),
         ]
     )
     reconfiguration = coordinator.build_reconfiguration(
         [
-            NodeProfile(
-                "node-a", "10.0.0.1", "cpu", 32, 28, 28, loaded_shards=[(0, 12)]
-            ),
-            NodeProfile(
-                "node-b", "10.0.0.2", "cpu", 32, 24, 24, loaded_shards=[(12, 24)]
-            ),
-            NodeProfile("node-c", "10.0.0.3", "cuda", 64, 40, 80, loaded_shards=[]),
+            NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28, loaded_shards=[(0, 12)]),
+            NodeProfile("node-b", "10.0.0.2", "cpu", 32, 24, loaded_shards=[(12, 24)]),
+            NodeProfile("node-c", "10.0.0.3", "cuda", 64, 80, loaded_shards=[]),
         ]
     )
+    assert reconfiguration is not None
 
     coordinator.broadcast_reconfiguration(reconfiguration)
 
     assert transport.sent[-1][0] == "cluster_reconfigure"
     assert "actions_by_node" in transport.sent[-1][1]
+
+
+def test_coordinator_build_plan_returns_none_and_sets_planning_error(monkeypatch):
+    import importlib
+
+    coordinator_module = importlib.import_module("scheduler.ClusterCoordinator")
+
+    coordinator = ClusterCoordinator(
+        transport=FakeTransport(),
+        model_id="Qwen/Qwen2.5-0.5B-Instruct",
+        total_layers=24,
+    )
+
+    def _raise_value_error(*args, **kwargs):
+        raise ValueError("insufficient capacity")
+
+    monkeypatch.setattr(coordinator_module, "compute_next_plan", _raise_value_error)
+
+    plan = coordinator.build_plan([NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28)])
+
+    assert plan is None
+    assert coordinator.current_plan is None
+    assert coordinator.current_node_ids == set()
+    assert coordinator.planning_error == "insufficient capacity"
+
+
+def test_coordinator_replan_returns_none_and_keeps_current_plan(monkeypatch):
+    import importlib
+
+    coordinator_module = importlib.import_module("scheduler.ClusterCoordinator")
+
+    coordinator = ClusterCoordinator(
+        transport=FakeTransport(),
+        model_id="Qwen/Qwen2.5-0.5B-Instruct",
+        total_layers=24,
+    )
+    initial = coordinator.build_plan(
+        [
+            NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28),
+            NodeProfile("node-b", "10.0.0.2", "cpu", 32, 24),
+        ]
+    )
+    assert initial is not None
+    previous_node_ids = set(coordinator.current_node_ids)
+
+    def _raise_value_error(*args, **kwargs):
+        raise ValueError("planner failed")
+
+    monkeypatch.setattr(coordinator_module, "compute_next_plan", _raise_value_error)
+
+    replanned = coordinator.replan(
+        [
+            NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28),
+            NodeProfile("node-b", "10.0.0.2", "cpu", 32, 24),
+        ]
+    )
+
+    assert replanned is None
+    assert coordinator.current_plan is initial
+    assert coordinator.current_node_ids == previous_node_ids
+    assert coordinator.planning_error == "planner failed"
+
+
+def test_coordinator_build_reconfiguration_stops_when_planning_fails(monkeypatch):
+    import importlib
+
+    coordinator_module = importlib.import_module("scheduler.ClusterCoordinator")
+
+    coordinator = ClusterCoordinator(
+        transport=FakeTransport(),
+        model_id="Qwen/Qwen2.5-0.5B-Instruct",
+        total_layers=24,
+    )
+    initial = coordinator.build_plan(
+        [
+            NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28),
+            NodeProfile("node-b", "10.0.0.2", "cpu", 32, 24),
+        ]
+    )
+    assert initial is not None
+
+    sentinel = ReconfigurationPlan(
+        model_id=coordinator.model_id,
+        coordinator_id="node-a",
+        actions_by_node={},
+    )
+    coordinator.last_reconfiguration = sentinel
+
+    def _raise_value_error(*args, **kwargs):
+        raise ValueError("no feasible replan")
+
+    monkeypatch.setattr(coordinator_module, "compute_next_plan", _raise_value_error)
+
+    reconfiguration = coordinator.build_reconfiguration(
+        [NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28)]
+    )
+
+    assert reconfiguration is None
+    assert coordinator.last_reconfiguration is sentinel
+    assert coordinator.current_plan is initial
+    assert coordinator.planning_error == "no feasible replan"
 
 
 def test_prepare_reconfiguration_waits_for_ready_before_commit():

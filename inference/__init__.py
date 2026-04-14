@@ -68,30 +68,10 @@ def __getattr__(name):
         from scheduler.DeviceProfile import snapshot_local_node_state
 
         return snapshot_local_node_state
-    if name == "choose_coordinator":
-        from scheduler.ClusterPlanner import choose_coordinator
-
-        return choose_coordinator
-    if name == "coordinator_score":
-        from scheduler.ClusterPlanner import coordinator_score
-
-        return coordinator_score
-    if name == "estimate_reference_stage_width":
-        from scheduler.ClusterPlanner import estimate_reference_stage_width
-
-        return estimate_reference_stage_width
-    if name == "estimate_stage_time_for_node":
-        from scheduler.ClusterPlanner import estimate_stage_time_for_node
-
-        return estimate_stage_time_for_node
     if name == "plan_static_distribution":
         from scheduler.ClusterPlanner import plan_static_distribution
 
         return plan_static_distribution
-    if name == "score_assignment_move_cost":
-        from scheduler.ClusterPlanner import score_assignment_move_cost
-
-        return score_assignment_move_cost
     if name == "replan_distribution":
         from scheduler.ClusterPlanner import replan_distribution
 

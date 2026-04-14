@@ -98,6 +98,23 @@ class NodeRuntime:
         self.p2p_client.registerToGroup(self.node_group, self.profile)
         self.p2p_client.waitForAllPeerConnection()
 
+    def attach_transport(
+        self,
+        transport,
+        on_ready: Optional[Callable[[str], Any]] = None,
+    ):
+        """Bind runtime handlers to an in-process transport (tests/demos)."""
+        if on_ready is not None:
+            self.on_ready = on_ready
+        transport.register_handler("cluster_plan", self.handle_cluster_plan)
+        transport.register_handler(
+            "cluster_reconfigure_prepare", self.handle_reconfiguration_prepare
+        )
+        transport.register_handler(
+            "cluster_reconfigure_commit", self.handle_reconfiguration_commit
+        )
+        return transport
+
     def distributedInfer(self, prompt: str):
         if self.local_shard is None:
             raise RuntimeError("Local shard is not loaded for inference")

@@ -15,7 +15,7 @@ def test_build_node_profile_returns_capacity_fields(monkeypatch):
     assert profile.node_id == "node-a"
     assert profile.device == "cpu"
     assert profile.total_memory_gb == 16.0
-    assert profile.free_memory_gb == 10.5
+    assert profile.max_usable_bytes == int(10.5 * (1024**3))
     assert profile.loaded_shards == [(0, 12)]
 
 

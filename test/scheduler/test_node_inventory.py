@@ -19,7 +19,7 @@ def test_node_state_round_trip_preserves_new_fields():
         total_memory_gb=64.0,
         free_memory_gb=40.0,
         kv_headroom_gb=8.0,
-        max_blocks_capacity=24,
+        max_usable_bytes=24 * (1024**3),
         block_latency_ms=12.5,
         loaded_ranges=[(0, 12)],
         online=True,
@@ -32,7 +32,7 @@ def test_node_state_round_trip_preserves_new_fields():
     assert restored == node
 
 
-def test_effective_capacity_prefers_explicit_block_capacity():
+def test_effective_usable_bytes_prefers_explicit_byte_budget():
     node = NodeState(
         node_id="node-a",
         host="10.0.0.1",
@@ -40,11 +40,11 @@ def test_effective_capacity_prefers_explicit_block_capacity():
         total_memory_gb=32.0,
         free_memory_gb=20.0,
         kv_headroom_gb=4.0,
-        max_blocks_capacity=6,
+        max_usable_bytes=6 * (1024**3),
         block_latency_ms=50.0,
     )
 
-    assert node.effective_capacity_blocks() == 6
+    assert node.effective_usable_bytes() == 6 * (1024**3)
 
 
 def test_read_linux_meminfo_kb_parses_total_and_available(tmp_path):
@@ -147,7 +147,7 @@ def test_build_node_state_cpu_snapshot_can_report_positive_capacity(monkeypatch)
 
     assert node.device_type == "cpu"
     assert node.free_memory_gb == 15.5
-    assert node.max_blocks_capacity == 14
+    assert node.max_usable_bytes == int(14.0 * (1024**3))
 
 
 def test_build_node_state_uses_snapshot_and_benchmark(monkeypatch):

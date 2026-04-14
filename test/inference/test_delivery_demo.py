@@ -96,9 +96,9 @@ def test_planner_scripted_runs_fixed_command_sequence(capsys):
     output = capsys.readouterr().out
 
     assert exit_code == 0
-    assert "CURRENT CLUSTER" in output
-    assert "EVENT LOG" in output
-    assert "join node-d" in output
+    assert "[CLUSTER]" in output
+    assert "command> join d" in output
+    assert "[7, 9)" in output
 
 
 def test_all_runs_delivery_steps_in_stable_order(monkeypatch, capsys):

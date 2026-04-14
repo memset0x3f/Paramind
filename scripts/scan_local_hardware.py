@@ -27,7 +27,7 @@ def render_text(node: NodeState) -> str:
             f"total_memory_gb={node.total_memory_gb}",
             f"free_memory_gb={node.free_memory_gb}",
             f"effective_speed={node.effective_speed()}",
-            f"effective_capacity_blocks={node.effective_capacity_blocks()}",
+            f"effective_usable_bytes={node.effective_usable_bytes()}",
             f"loaded_ranges={node.loaded_ranges}",
         ]
     )
@@ -38,7 +38,7 @@ def render_json(node: NodeState, scan_wall_time_ms: float | None = None) -> str:
     for key, value in sorted(node.to_dict().items()):
         payload[key] = value
     payload["effective_speed"] = node.effective_speed()
-    payload["effective_capacity_blocks"] = node.effective_capacity_blocks()
+    payload["effective_usable_bytes"] = node.effective_usable_bytes()
     if scan_wall_time_ms is not None:
         payload["scan_wall_time_ms"] = round(scan_wall_time_ms, 3)
     return json.dumps(payload, indent=2)

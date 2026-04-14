@@ -1,29 +1,63 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
 import math
+from pathlib import Path
 
-from scheduler.ClusterTypes import (
+from .ClusterTypes import (
     NodeReconfigurationAction,
     PlacementPlan,
     ShardAssignment,
 )
-from scheduler.NodeInventory import NodeState, normalize_node_state
+from .NodeInventory import NodeState, normalize_node_state
 
-FIRST_LAST_ROLE_PENALTY = 1.0
-MEMORY_PRESSURE_WEIGHT = 0.2
-MIGRATION_FIXED_PENALTY = 2.0
-MIGRATION_SIZE_PENALTY = 0.25
-PRELOAD_MISS_PENALTY = 1.0
-BOUNDARY_SHIFT_PENALTY = 0.1
-REPLAN_SUM_WEIGHT = 0.15
+_PROFILE_DIR = Path(__file__).resolve().parent.parent / "models" / "profiles"
+DEFAULT_MODEL_ID = "Qwen/Qwen2.5-0.5B-Instruct"
 
 
-@dataclass(frozen=True)
-class _PlanScore:
-    objective: float
-    bottleneck: float
-    total: float
+def _profile_filename(model_id: str) -> Path:
+    safe_name = model_id.replace("/", "__")
+    return _PROFILE_DIR / f"{safe_name}.json"
+
+
+def _load_model_profile(model_id: str, total_layers: int) -> dict:
+    path = _profile_filename(model_id)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Missing layer-bytes profile for {model_id}. Expected {path}. "
+            "Generate it with models.ensure_model_profile(model_id) first."
+        )
+    payload = json.loads(path.read_text())
+    layer_bytes = payload.get("layer_bytes", {})
+    if len(layer_bytes) != total_layers:
+        raise ValueError(
+            f"Layer-bytes profile for {model_id} has {len(layer_bytes)} layers, "
+            f"but planner requested {total_layers}."
+        )
+    return payload
+
+
+def range_bytes(model_id: str, start: int, end: int, total_layers: int) -> int:
+    if start < 0 or end < start or end > total_layers:
+        raise ValueError(
+            f"Invalid layer range [{start}, {end}) for total_layers={total_layers}"
+        )
+    profile = _load_model_profile(model_id, total_layers)
+    layer_bytes = profile["layer_bytes"]
+    special_components = profile.get("special_components", {})
+    total = sum(layer_bytes[str(index)] for index in range(start, end))
+    if start == 0:
+        total += int(special_components.get("embeddings", 0))
+    if end == total_layers:
+        total += int(special_components.get("final_norm", 0))
+        total += int(special_components.get("lm_head", 0))
+        total += sum(int(v) for k, v in profile.get("other_components", {}).items())
+    return total
+
+
+def _total_model_bytes(model_id: str, total_layers: int) -> int:
+    profile = _load_model_profile(model_id, total_layers)
+    return int(profile["total_bytes"])
 
 
 def _layer_work(
@@ -36,136 +70,13 @@ def _layer_work(
     return layer_work
 
 
-def _sum_work(prefix: list[float], start: int, end: int) -> float:
-    return prefix[end] - prefix[start]
-
-
-def estimate_reference_stage_width(total_layers: int, active_nodes: int) -> int:
-    if total_layers <= 0:
-        raise ValueError("total_layers must be positive")
-    if active_nodes <= 0:
-        raise ValueError("active_nodes must be positive")
-    return int(math.ceil(total_layers / active_nodes))
-
-
-def estimate_stage_time_for_node(
-    node,
-    width: int,
-    total_layers: int,
-    role: str = "middle",
-) -> float:
-    normalized = normalize_node_state(node)
-    layer_work = _layer_work(total_layers)
-    prefix = [0.0]
-    for value in layer_work:
-        prefix.append(prefix[-1] + value)
-    return _estimate_stage_cost(
-        0,
-        width,
-        normalized,
-        total_layers,
-        prefix,
-        is_first_stage=(role == "first"),
-        is_last_stage=(role == "last"),
-    )
-
-
-def coordinator_score(
-    node,
-    total_layers: int,
-    active_nodes: int,
-    role: str = "first",
-    current_plan: PlacementPlan | None = None,
-) -> float:
-    normalized = normalize_node_state(node)
-    if current_plan is not None:
-        for assignment in current_plan.assignments:
-            if assignment.node_id == normalized.node_id:
-                return estimate_stage_time_for_node(
-                    normalized,
-                    width=assignment.num_layers,
-                    total_layers=total_layers,
-                    role=assignment.role,
-                )
-    width = estimate_reference_stage_width(total_layers, active_nodes)
-    return estimate_stage_time_for_node(
-        normalized,
-        width=width,
-        total_layers=total_layers,
-        role=role,
-    )
-
-
-def choose_coordinator(
-    nodes, total_layers: int | None = None, current_plan: PlacementPlan | None = None
-) -> str:
-    normalized_nodes = [normalize_node_state(node) for node in nodes]
-    if not normalized_nodes:
-        raise ValueError("At least one node profile is required")
-    candidate_nodes = normalized_nodes
-    if current_plan is not None and current_plan.assignments:
-        assigned_node_ids = {
-            assignment.node_id for assignment in current_plan.assignments
-        }
-        scoped = [
-            node for node in normalized_nodes if node.node_id in assigned_node_ids
-        ]
-        if scoped:
-            candidate_nodes = scoped
-    effective_total_layers = total_layers
-    if effective_total_layers is None:
-        if current_plan is not None and current_plan.assignments:
-            effective_total_layers = max(
-                assignment.end_layer for assignment in current_plan.assignments
-            )
-        else:
-            effective_total_layers = max(len(normalized_nodes), 1)
-    return min(
-        candidate_nodes,
-        key=lambda node: coordinator_score(
-            node,
-            total_layers=effective_total_layers,
-            active_nodes=len(candidate_nodes),
-            current_plan=current_plan,
-        ),
-    ).node_id
-
-
-def score_assignment_move_cost(
-    current_owner: str | None,
-    target_owner: str,
-    shard: tuple[int, int],
-) -> float:
-    if current_owner is None:
-        return 1.0
-    if current_owner == target_owner:
-        return 0.0
-    return 10.0 + float(shard[1] - shard[0])
-
-
-def estimate_assignment_cost(
-    node: NodeState,
-    assignment: ShardAssignment,
-    shard_param_gb: float,
-    bandwidth_gbps: float | None = None,
-) -> float:
-    node = normalize_node_state(node)
-    shard_key = (assignment.start_layer, assignment.end_layer)
-    load_penalty = 0.0 if shard_key in node.loaded_ranges else shard_param_gb
-    device_bonus = -2.0 if node.device_type == "cuda" else 0.0
-    role_cost = FIRST_LAST_ROLE_PENALTY if assignment.role in {"first", "last"} else 0.0
-    bandwidth_cost = 0.0 if bandwidth_gbps is None else 1.0 / max(bandwidth_gbps, 0.1)
-    compute_bias = -node.effective_speed() * 0.01
-    return load_penalty + role_cost + bandwidth_cost + compute_bias + device_bonus
-
-
 def _sort_nodes_by_quality_desc(nodes: list[NodeState]) -> list[NodeState]:
     """Higher compute speed and larger capacity rank first (cold-start greedy order)."""
     return sorted(
         nodes,
         key=lambda node: (
             -node.effective_speed(),
-            -node.effective_capacity_blocks(),
+            -node.effective_usable_bytes(),
             node.node_id,
         ),
     )
@@ -174,38 +85,9 @@ def _sort_nodes_by_quality_desc(nodes: list[NodeState]) -> list[NodeState]:
 def _node_quality_key(node: NodeState) -> tuple[float, int, str]:
     return (
         node.effective_speed(),
-        node.effective_capacity_blocks(),
+        node.effective_usable_bytes(),
         node.node_id,
     )
-
-
-def _arrange_nodes_for_pipeline(
-    nodes: list[NodeState], total_layers: int
-) -> list[NodeState]:
-    if not nodes:
-        return []
-    reference_width = estimate_reference_stage_width(total_layers, len(nodes))
-    ranked = sorted(
-        nodes,
-        key=lambda node: (
-            estimate_stage_time_for_node(
-                node,
-                width=reference_width,
-                total_layers=total_layers,
-                role="middle",
-            ),
-            -node.effective_capacity_blocks(),
-            node.node_id,
-        ),
-    )
-    front: list[NodeState] = []
-    back: list[NodeState] = []
-    for index, node in enumerate(ranked):
-        if index % 2 == 0:
-            front.append(node)
-        else:
-            back.append(node)
-    return front + list(reversed(back))
 
 
 def _build_assignments(
@@ -235,44 +117,11 @@ def _build_assignments(
             )
         )
 
-    temp_plan = PlacementPlan(
-        model_id=model_id,
-        assignments=assignments,
-    )
     return PlacementPlan(
         model_id=model_id,
         assignments=assignments,
-        coordinator_id=choose_coordinator(
-            ordered_nodes, total_layers=boundaries[-1], current_plan=temp_plan
-        ),
+        coordinator_id=None,
     )
-
-
-def _estimate_stage_cost(
-    start: int,
-    end: int,
-    node: NodeState,
-    total_layers: int,
-    prefix_work: list[float],
-    is_first_stage: bool,
-    is_last_stage: bool,
-) -> float:
-    if end <= start:
-        return math.inf
-    width = end - start
-    capacity = node.effective_capacity_blocks()
-    if capacity <= 0 or width > capacity:
-        return math.inf
-
-    work = _sum_work(prefix_work, start, end)
-    speed = max(node.effective_speed(), 0.001)
-    cost = work / speed
-    if is_first_stage:
-        cost += FIRST_LAST_ROLE_PENALTY / speed
-    if is_last_stage:
-        cost += FIRST_LAST_ROLE_PENALTY / speed
-    cost += MEMORY_PRESSURE_WEIGHT * (width / max(capacity, 1))
-    return cost
 
 
 def _solve_cold_start_greedy_by_quality(
@@ -287,24 +136,29 @@ def _solve_cold_start_greedy_by_quality(
     aggregate capacity is insufficient (caller should raise).
     """
     _ = layer_work  # cold-start greedy uses uniform layer slots; work weights are for replan cost only
-    remaining = total_layers
+    cursor = 0
     used_nodes: list[NodeState] = []
     boundaries: list[int] = [0]
 
     for node in ordered_nodes:
-        if remaining <= 0:
+        if cursor >= total_layers:
             break
-        cap = node.effective_capacity_blocks()
-        if cap <= 0:
+        usable_bytes = node.effective_usable_bytes()
+        if usable_bytes <= 0:
             continue
-        take = min(cap, remaining)
-        if take <= 0:
+        end = cursor
+        while (
+            end < total_layers
+            and range_bytes(model_id, cursor, end + 1, total_layers) <= usable_bytes
+        ):
+            end += 1
+        if end <= cursor:
             continue
         used_nodes.append(node)
-        boundaries.append(boundaries[-1] + take)
-        remaining -= take
+        boundaries.append(end)
+        cursor = end
 
-    if remaining > 0 or not used_nodes:
+    if cursor < total_layers or not used_nodes:
         return None
     if boundaries[-1] != total_layers:
         return None
@@ -335,15 +189,10 @@ def _annotate_plan_sources_from_current(
                 source_node_id=source_node_id,
             )
         )
-    temp_plan = PlacementPlan(model_id=current.model_id, assignments=assignments)
     return PlacementPlan(
         model_id=current.model_id,
         assignments=assignments,
-        coordinator_id=choose_coordinator(
-            ordered_nodes,
-            total_layers=total_layers,
-            current_plan=temp_plan,
-        ),
+        coordinator_id=None,
     )
 
 
@@ -357,7 +206,7 @@ def plan_static_distribution(
     active_nodes = [
         node
         for node in normalized_nodes
-        if node.online and node.effective_capacity_blocks() > 0
+        if node.online and node.effective_usable_bytes() > 0
     ]
     if not active_nodes:
         raise ValueError(
@@ -365,10 +214,10 @@ def plan_static_distribution(
         )
 
     layer_work = _layer_work(total_layers, layer_work)
-    total_capacity = sum(node.effective_capacity_blocks() for node in active_nodes)
-    print(f"Total layers: {total_layers}, Total capacity: {total_capacity}")
-    if total_capacity < total_layers:
-        raise ValueError("Insufficient cluster capacity for total layers")
+    total_capacity_bytes = sum(node.effective_usable_bytes() for node in active_nodes)
+    total_model_bytes = _total_model_bytes(model_id, total_layers)
+    if total_capacity_bytes < total_model_bytes:
+        raise ValueError("Insufficient cluster capacity bytes for total model")
 
     ordered_nodes = _sort_nodes_by_quality_desc(active_nodes)
     plan = _solve_cold_start_greedy_by_quality(
@@ -386,7 +235,7 @@ def _normalize_active_nodes(nodes) -> list[NodeState]:
     active_nodes = [
         node
         for node in normalized_nodes
-        if node.online and node.effective_capacity_blocks() > 0
+        if node.online and node.effective_usable_bytes() > 0
     ]
     if not active_nodes:
         raise ValueError(
@@ -398,17 +247,18 @@ def _normalize_active_nodes(nodes) -> list[NodeState]:
 def _assignment_can_stay(
     assignment: ShardAssignment,
     node_by_id: dict[str, NodeState],
+    model_id: str,
+    total_layers: int,
 ) -> bool:
     node = node_by_id.get(assignment.node_id)
     if node is None or not node.online:
         return False
-    width = assignment.num_layers
-    if width > node.effective_capacity_blocks():
+    shard_bytes = range_bytes(
+        model_id, assignment.start_layer, assignment.end_layer, total_layers
+    )
+    if shard_bytes > node.effective_usable_bytes():
         return False
-    shard_key = (assignment.start_layer, assignment.end_layer)
-    if shard_key in node.loaded_ranges:
-        return True
-    return width <= node.effective_capacity_blocks()
+    return True
 
 
 def _owner_by_layer(current: PlacementPlan, total_layers: int) -> list[str | None]:
@@ -494,126 +344,84 @@ def diff_assignment_changes(
     return actions
 
 
-def _range_loaded(node: NodeState, start: int, end: int) -> bool:
-    for loaded_start, loaded_end in node.loaded_ranges:
-        if loaded_start <= start and end <= loaded_end:
-            return True
-    return False
-
-
-def _estimate_migration_cost(
-    node: NodeState,
-    start: int,
-    end: int,
-    owner_by_layer: list[str | None],
-) -> float:
-    dominant_owner = _dominant_owner(owner_by_layer, start, end)
-    width = end - start
-    changed = dominant_owner is not None and dominant_owner != node.node_id
-    migration_cost = MIGRATION_FIXED_PENALTY * float(changed)
-    migration_cost += MIGRATION_SIZE_PENALTY * sum(
-        1
-        for owner in owner_by_layer[start:end]
-        if owner is not None and owner != node.node_id
+def _assignment_bytes(
+    model_id: str, assignment: ShardAssignment, total_layers: int
+) -> int:
+    return range_bytes(
+        model_id, assignment.start_layer, assignment.end_layer, total_layers
     )
-    if not _range_loaded(node, start, end):
-        migration_cost += PRELOAD_MISS_PENALTY
-    return migration_cost + (0.05 * width)
 
 
-def _solve_replan_dp(
+def _expandable_right_layers(
+    node: NodeState,
+    current_start: int,
+    current_end: int,
+    gap_end: int,
     model_id: str,
     total_layers: int,
-    ordered_nodes: list[NodeState],
-    layer_work: list[float],
-    current: PlacementPlan,
-) -> tuple[_PlanScore, PlacementPlan] | None:
-    prefix = [0.0]
-    for value in layer_work:
-        prefix.append(prefix[-1] + value)
+) -> int:
+    used = range_bytes(model_id, current_start, current_end, total_layers)
+    usable = node.effective_usable_bytes()
+    end = current_end
+    while end < gap_end:
+        next_bytes = range_bytes(model_id, current_start, end + 1, total_layers)
+        if next_bytes > usable:
+            break
+        used = next_bytes
+        end += 1
+    return end - current_end
 
-    current_boundaries = [
-        assignment.end_layer for assignment in current.assignments[:-1]
-    ]
-    owner_by_layer = _owner_by_layer(current, total_layers)
-    node_count = len(ordered_nodes)
-    inf_score = _PlanScore(math.inf, math.inf, math.inf)
-    dp: list[list[_PlanScore]] = [
-        [inf_score for _ in range(total_layers + 1)] for _ in range(node_count + 1)
-    ]
-    prev: list[list[int | None]] = [
-        [None for _ in range(total_layers + 1)] for _ in range(node_count + 1)
-    ]
-    dp[0][0] = _PlanScore(0.0, 0.0, 0.0)
 
-    for i in range(1, node_count + 1):
-        node = ordered_nodes[i - 1]
-        for end in range(i, total_layers - (node_count - i) + 1):
-            best = inf_score
-            best_start = None
-            for start in range(i - 1, end):
-                previous = dp[i - 1][start]
-                if math.isinf(previous.objective):
-                    continue
-                stage_cost = _estimate_stage_cost(
-                    start,
-                    end,
-                    node,
-                    total_layers,
-                    prefix,
-                    is_first_stage=(i == 1),
-                    is_last_stage=(i == node_count),
-                )
-                if math.isinf(stage_cost):
-                    continue
-                migration_cost = _estimate_migration_cost(
-                    node, start, end, owner_by_layer
-                )
-                target_boundary = (
-                    current_boundaries[i - 1]
-                    if i - 1 < len(current_boundaries)
-                    else total_layers
-                )
-                instability_cost = BOUNDARY_SHIFT_PENALTY * abs(end - target_boundary)
-                stage_total = stage_cost + migration_cost + instability_cost
-                bottleneck = max(previous.bottleneck, stage_cost)
-                total = previous.total + stage_total
-                objective = bottleneck + REPLAN_SUM_WEIGHT * total
-                score = _PlanScore(objective, bottleneck, total)
-                if (score.objective, score.total) < (best.objective, best.total):
-                    best = score
-                    best_start = start
-            dp[i][end] = best
-            prev[i][end] = best_start
+def _expandable_left_layers(
+    node: NodeState,
+    gap_start: int,
+    current_start: int,
+    current_end: int,
+    model_id: str,
+    total_layers: int,
+) -> int:
+    used = range_bytes(model_id, current_start, current_end, total_layers)
+    usable = node.effective_usable_bytes()
+    start = current_start
+    while start > gap_start:
+        next_bytes = range_bytes(model_id, start - 1, current_end, total_layers)
+        if next_bytes > usable:
+            break
+        used = next_bytes
+        start -= 1
+    return current_start - start
 
-    best_plan: tuple[_PlanScore, PlacementPlan] | None = None
-    for used_nodes in range(1, node_count + 1):
-        score = dp[used_nodes][total_layers]
-        if math.isinf(score.objective):
-            continue
-        boundaries = [0] * (used_nodes + 1)
-        boundaries[used_nodes] = total_layers
-        cursor = total_layers
-        for i in range(used_nodes, 0, -1):
-            start = prev[i][cursor]
-            if start is None:
-                break
-            boundaries[i - 1] = start
-            cursor = start
 
-        base_plan = _build_assignments(model_id, ordered_nodes[:used_nodes], boundaries)
-        plan = _annotate_plan_sources_from_current(
-            base_plan=base_plan,
-            current=current,
-            ordered_nodes=ordered_nodes[:used_nodes],
-            total_layers=total_layers,
-        )
-        if best_plan is None or (score.objective, score.total) < (
-            best_plan[0].objective,
-            best_plan[0].total,
-        ):
-            best_plan = (score, plan)
-    return best_plan
+def _max_range_end_for_node(
+    model_id: str,
+    node: NodeState,
+    start: int,
+    total_layers: int,
+    max_end: int | None = None,
+) -> int:
+    usable = node.effective_usable_bytes()
+    limit = total_layers if max_end is None else min(max_end, total_layers)
+    end = start
+    while end < limit and range_bytes(model_id, start, end + 1, total_layers) <= usable:
+        end += 1
+    return end
+
+
+def _min_range_start_for_node(
+    model_id: str,
+    node: NodeState,
+    end: int,
+    min_start: int,
+    total_layers: int,
+) -> int:
+    usable = node.effective_usable_bytes()
+    start = end
+    while (
+        start > min_start
+        and range_bytes(model_id, start - 1, end, total_layers) <= usable
+    ):
+        start -= 1
+    return start
 
 
 def plan_membership_stable_distribution(
@@ -629,25 +437,32 @@ def plan_membership_stable_distribution(
     if (
         current.assignments
         and all(
-            _assignment_can_stay(assignment, node_by_id)
+            _assignment_can_stay(assignment, node_by_id, current.model_id, total_layers)
             for assignment in current.assignments
         )
         and current_node_ids.issubset(active_node_ids)
     ):
         return current
 
-    layer_work = _layer_work(total_layers, layer_work)
-    total_capacity = sum(node.effective_capacity_blocks() for node in active_nodes)
-    if total_capacity < total_layers:
-        raise ValueError("Insufficient cluster capacity for total layers")
-
-    ordered_nodes = _arrange_nodes_for_pipeline(active_nodes, total_layers=total_layers)
-    solved = _solve_replan_dp(
-        current.model_id, total_layers, ordered_nodes, layer_work, current
+    total_capacity_bytes = sum(node.effective_usable_bytes() for node in active_nodes)
+    total_model_bytes = _total_model_bytes(current.model_id, total_layers)
+    if total_capacity_bytes < total_model_bytes:
+        raise ValueError("Insufficient cluster capacity bytes for total model")
+    ordered_nodes = _sort_nodes_by_quality_desc(active_nodes)
+    base_plan = _solve_cold_start_greedy_by_quality(
+        current.model_id,
+        total_layers,
+        ordered_nodes,
+        _layer_work(total_layers, layer_work),
     )
-    if solved is None:
+    if base_plan is None:
         raise ValueError("No feasible replan found for the current nodes")
-    return solved[1]
+    return _annotate_plan_sources_from_current(
+        base_plan=base_plan,
+        current=current,
+        ordered_nodes=ordered_nodes,
+        total_layers=total_layers,
+    )
 
 
 def plan_join_distribution(
@@ -690,8 +505,8 @@ def plan_join_distribution(
         if _node_quality_key(standby) <= _node_quality_key(weakest_node):
             continue
 
-        remaining = standby.effective_capacity_blocks()
-        if remaining <= 0:
+        usable_bytes = standby.effective_usable_bytes()
+        if usable_bytes <= 0:
             continue
 
         def _neighbor_side(left_index: int, right_index: int) -> str | None:
@@ -714,47 +529,75 @@ def plan_join_distribution(
             return "left" if left_quality <= right_quality else "right"
 
         center = ordered[weakest_index]
-        new_start = center.start_layer
-        new_end = center.end_layer
+        center_bytes = _assignment_bytes(current.model_id, center, total_layers)
+        preferred_side = _neighbor_side(weakest_index - 1, weakest_index + 1)
 
-        if remaining >= center.num_layers:
-            remaining -= center.num_layers
-            left_bound = weakest_index
-            right_bound = weakest_index
+        if center_bytes <= usable_bytes:
+            new_start = center.start_layer
+            new_end = center.end_layer
+        elif preferred_side == "left":
+            new_start = center.start_layer
+            new_end = _max_range_end_for_node(
+                current.model_id,
+                standby,
+                center.start_layer,
+                total_layers,
+                max_end=center.end_layer,
+            )
         else:
-            preferred_side = _neighbor_side(weakest_index - 1, weakest_index + 1)
-            if preferred_side == "left":
-                new_start = center.end_layer - remaining
-            else:
-                new_end = center.start_layer + remaining
-            remaining = 0
-            left_bound = weakest_index
-            right_bound = weakest_index
+            new_end = center.end_layer
+            new_start = _min_range_start_for_node(
+                current.model_id,
+                standby,
+                center.end_layer,
+                center.start_layer,
+                total_layers,
+            )
 
-        while remaining > 0:
+        if new_end <= new_start:
+            continue
+
+        left_bound = weakest_index
+        right_bound = weakest_index
+
+        while True:
             candidate_side = _neighbor_side(left_bound - 1, right_bound + 1)
             if candidate_side is None:
                 break
             if candidate_side == "left":
                 candidate = ordered[left_bound - 1]
-                width = candidate.num_layers
-                if remaining >= width:
+                extended_start = _min_range_start_for_node(
+                    current.model_id,
+                    standby,
+                    new_end,
+                    candidate.start_layer,
+                    total_layers,
+                )
+                if extended_start == new_start:
+                    break
+                if extended_start <= candidate.start_layer:
                     new_start = candidate.start_layer
-                    remaining -= width
                     left_bound -= 1
                 else:
-                    new_start = candidate.end_layer - remaining
-                    remaining = 0
+                    new_start = extended_start
+                    break
             else:
                 candidate = ordered[right_bound + 1]
-                width = candidate.num_layers
-                if remaining >= width:
+                extended_end = _max_range_end_for_node(
+                    current.model_id,
+                    standby,
+                    new_start,
+                    total_layers,
+                    max_end=candidate.end_layer,
+                )
+                if extended_end == new_end:
+                    break
+                if extended_end >= candidate.end_layer:
                     new_end = candidate.end_layer
-                    remaining -= width
                     right_bound += 1
                 else:
-                    new_end = candidate.start_layer + remaining
-                    remaining = 0
+                    new_end = extended_end
+                    break
 
         segments: list[tuple[str, int, int]] = []
         inserted = False
@@ -839,19 +682,19 @@ def plan_drop_distribution(
     current_node_ids = {assignment.node_id for assignment in current.assignments}
 
     if current_node_ids.issubset(active_node_ids) and all(
-        _assignment_can_stay(assignment, node_by_id)
+        _assignment_can_stay(assignment, node_by_id, current.model_id, total_layers)
         for assignment in current.assignments
     ):
         return current
 
     layer_work = _layer_work(total_layers, layer_work)
-    total_capacity = sum(node.effective_capacity_blocks() for node in active_nodes)
-    if total_capacity < total_layers:
-        raise ValueError("Insufficient cluster capacity for total layers")
+    total_capacity_bytes = sum(node.effective_usable_bytes() for node in active_nodes)
+    total_model_bytes = _total_model_bytes(current.model_id, total_layers)
+    if total_capacity_bytes < total_model_bytes:
+        raise ValueError("Insufficient cluster capacity bytes for total model")
 
     ordered_current = sorted(current.assignments, key=lambda item: item.start_layer)
-    surviving_widths: dict[str, int] = {}
-    spare_capacity: dict[str, int] = {}
+    surviving_segments: dict[str, list[int]] = {}
     standby_nodes = {
         node.node_id: node
         for node in _sort_nodes_by_quality_desc(active_nodes)
@@ -862,80 +705,124 @@ def plan_drop_distribution(
     for assignment in ordered_current:
         if assignment.node_id not in active_node_ids:
             continue
-        surviving_widths[assignment.node_id] = assignment.num_layers
-        spare_capacity[assignment.node_id] = max(
-            0,
-            node_by_id[assignment.node_id].effective_capacity_blocks()
-            - assignment.num_layers,
-        )
+        surviving_segments[assignment.node_id] = [
+            assignment.start_layer,
+            assignment.end_layer,
+        ]
 
-    inserted_by_gap: dict[int, list[tuple[str, int]]] = {}
+    inserted_by_gap: dict[int, list[tuple[str, int, int]]] = {}
 
     for gap_index, assignment in enumerate(ordered_current):
         if assignment.node_id in active_node_ids:
             continue
 
-        remaining_gap = assignment.num_layers
+        remaining_start = assignment.start_layer
+        remaining_end = assignment.end_layer
         distance = 1
-        while remaining_gap > 0 and distance < len(ordered_current):
-            for candidate_index in (gap_index - distance, gap_index + distance):
-                if remaining_gap <= 0:
+        while remaining_start < remaining_end and distance < len(ordered_current):
+            for candidate_index, side in (
+                (gap_index - distance, "left"),
+                (gap_index + distance, "right"),
+            ):
+                if remaining_start >= remaining_end:
                     break
                 if candidate_index < 0 or candidate_index >= len(ordered_current):
                     continue
                 candidate = ordered_current[candidate_index]
                 candidate_id = candidate.node_id
-                if candidate_id not in surviving_widths:
+                if candidate_id not in surviving_segments:
                     continue
-                available = spare_capacity.get(candidate_id, 0)
-                if available <= 0:
-                    continue
-                take = min(available, remaining_gap)
-                surviving_widths[candidate_id] += take
-                spare_capacity[candidate_id] -= take
-                remaining_gap -= take
+                current_start, current_end = surviving_segments[candidate_id]
+                node = node_by_id[candidate_id]
+                if side == "left":
+                    extended_end = _max_range_end_for_node(
+                        current.model_id,
+                        node,
+                        current_start,
+                        total_layers,
+                        max_end=remaining_end,
+                    )
+                    if extended_end > current_end:
+                        surviving_segments[candidate_id][1] = extended_end
+                        remaining_start = max(remaining_start, extended_end)
+                else:
+                    extended_start = _min_range_start_for_node(
+                        current.model_id,
+                        node,
+                        current_end,
+                        remaining_start,
+                        total_layers,
+                    )
+                    if extended_start < current_start:
+                        surviving_segments[candidate_id][0] = extended_start
+                        remaining_end = min(remaining_end, extended_start)
             distance += 1
 
-        if remaining_gap > 0:
-            inserted: list[tuple[str, int]] = []
-            while remaining_gap > 0 and standby_queue:
+        if remaining_start < remaining_end:
+            inserted: list[tuple[str, int, int]] = []
+            cursor = remaining_start
+            while cursor < remaining_end and standby_queue:
                 standby_id = standby_queue.pop(0)
                 standby = standby_nodes[standby_id]
-                take = min(standby.effective_capacity_blocks(), remaining_gap)
-                if take <= 0:
+                take_end = _max_range_end_for_node(
+                    current.model_id,
+                    standby,
+                    cursor,
+                    total_layers,
+                    max_end=remaining_end,
+                )
+                if take_end <= cursor:
                     continue
-                inserted.append((standby_id, take))
-                remaining_gap -= take
-            if remaining_gap > 0:
+                inserted.append((standby_id, cursor, take_end))
+                cursor = take_end
+            if cursor < remaining_end:
                 raise ValueError("No feasible drop repair found for the current nodes")
             inserted_by_gap[gap_index] = inserted
 
-    rebuilt_nodes: list[NodeState] = []
-    boundaries: list[int] = [0]
+    segments: list[tuple[str, int, int]] = []
 
     for index, assignment in enumerate(ordered_current):
-        if assignment.node_id in surviving_widths:
-            width = surviving_widths[assignment.node_id]
-            if width > 0:
-                rebuilt_nodes.append(node_by_id[assignment.node_id])
-                boundaries.append(boundaries[-1] + width)
+        if assignment.node_id in surviving_segments:
+            start, end = surviving_segments[assignment.node_id]
+            if end > start:
+                segments.append((assignment.node_id, start, end))
         else:
-            for standby_id, width in inserted_by_gap.get(index, []):
-                rebuilt_nodes.append(node_by_id[standby_id])
-                boundaries.append(boundaries[-1] + width)
+            segments.extend(inserted_by_gap.get(index, []))
 
-    if boundaries[-1] != total_layers or not rebuilt_nodes:
+    if not segments:
         raise ValueError("No feasible drop repair found for the current nodes")
+    if segments[0][1] != 0 or segments[-1][2] != total_layers:
+        raise ValueError("No feasible drop repair found for the current nodes")
+    for previous, current_segment in zip(segments, segments[1:]):
+        if previous[2] != current_segment[1]:
+            raise ValueError("No feasible drop repair found for the current nodes")
 
-    base_plan = _build_assignments(
-        current.model_id,
-        rebuilt_nodes,
-        boundaries,
-    )
+    assignments: list[ShardAssignment] = []
+    ordered_participants: list[NodeState] = []
+    seen_nodes: set[str] = set()
+    for index, (node_id, start, end) in enumerate(segments):
+        role = "middle"
+        if index == 0:
+            role = "first"
+        if index == len(segments) - 1:
+            role = "last" if role == "middle" else role
+        assignments.append(
+            ShardAssignment(
+                node_id=node_id,
+                start_layer=start,
+                end_layer=end,
+                role=role,
+            )
+        )
+        if node_id not in seen_nodes:
+            ordered_participants.append(node_by_id[node_id])
+            seen_nodes.add(node_id)
+
+    base_plan = PlacementPlan(model_id=current.model_id, assignments=assignments)
     return _annotate_plan_sources_from_current(
         base_plan=base_plan,
         current=current,
-        ordered_nodes=rebuilt_nodes,
+        ordered_nodes=ordered_participants,
         total_layers=total_layers,
     )
 

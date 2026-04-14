@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import math
-
 from scheduler.ClusterTypes import NodeProfile
 from scheduler.NodeInventory import (
     NodeState,
@@ -34,7 +32,6 @@ def snapshot_local_node_profile(
         device_type=device,
         total_memory_gb=total_memory_gb,
         free_memory_gb=free_memory_gb,
-        max_blocks_capacity=max(int(math.floor(free_memory_gb)), 0),
         block_throughput=benchmark_block_speed(device),
         loaded_ranges=loaded_shards or [],
     )
@@ -43,9 +40,9 @@ def snapshot_local_node_profile(
         host=state.host,
         device=state.device_type,
         total_memory_gb=state.total_memory_gb,
-        free_memory_gb=state.free_memory_gb,
         compute_score=state.effective_speed(),
         loaded_shards=state.loaded_ranges,
+        max_usable_bytes=state.effective_usable_bytes(),
     )
 
 

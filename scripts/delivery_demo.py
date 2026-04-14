@@ -14,8 +14,8 @@ from scripts import cluster_planner_demo, local_demo, runtime_lifecycle_demo
 from scripts.demo_rendering import render_key_value_block, render_table
 
 SCRIPTED_PLANNER_COMMANDS = [
-    "start node-a,node-b,node-c",
-    "join node-d",
+    "start a,b,c",
+    "join d",
     "show",
     "quit",
 ]

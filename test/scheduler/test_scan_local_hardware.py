@@ -15,7 +15,7 @@ def test_text_render_includes_key_metrics(monkeypatch):
             total_memory_gb=64.0,
             free_memory_gb=48.0,
             kv_headroom_gb=4.0,
-            max_blocks_capacity=22,
+            max_usable_bytes=22 * (1024**3),
             block_throughput=80.0,
             loaded_ranges=[(0, 12)],
         ),
@@ -29,7 +29,7 @@ def test_text_render_includes_key_metrics(monkeypatch):
     assert "device_type=cuda" in rendered
     assert "free_memory_gb=48.0" in rendered
     assert "effective_speed=" in rendered
-    assert "effective_capacity_blocks=22" in rendered
+    assert "effective_usable_bytes=" in rendered
 
 
 def test_json_mode_returns_parseable_required_fields(monkeypatch):
@@ -42,7 +42,7 @@ def test_json_mode_returns_parseable_required_fields(monkeypatch):
             device_type="cpu",
             total_memory_gb=32.0,
             free_memory_gb=20.0,
-            max_blocks_capacity=10,
+            max_usable_bytes=10 * (1024**3),
             block_throughput=12.5,
             loaded_ranges=[],
         ),
@@ -57,7 +57,7 @@ def test_json_mode_returns_parseable_required_fields(monkeypatch):
     assert data["node_id"] == "node-b"
     assert data["device_type"] == "cpu"
     assert "effective_speed" in data
-    assert "effective_capacity_blocks" in data
+    assert "effective_usable_bytes" in data
     assert "loaded_ranges" in data
     assert data["scan_wall_time_ms"] == 12.345
     assert list(data.keys())[-1] == "scan_wall_time_ms"
@@ -74,7 +74,7 @@ def test_scan_uses_nodeinventory_snapshot_helper(monkeypatch):
             device_type="cpu",
             total_memory_gb=32.0,
             free_memory_gb=16.0,
-            max_blocks_capacity=8,
+            max_usable_bytes=8 * (1024**3),
             block_throughput=10.0,
             loaded_ranges=[],
         )

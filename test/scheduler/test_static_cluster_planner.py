@@ -1,5 +1,13 @@
 from scheduler.ClusterTypes import NodeProfile, ShardAssignment, PlacementPlan
-from scheduler.ClusterPlanner import choose_coordinator, plan_static_distribution
+from scheduler.ClusterPlanner import plan_static_distribution, range_bytes
+
+
+MODEL_ID = "Qwen/Qwen2.5-0.5B-Instruct"
+TOTAL_LAYERS = 24
+
+
+def _budget(start: int, end: int) -> int:
+    return range_bytes(MODEL_ID, start, end, TOTAL_LAYERS)
 
 
 def test_placement_plan_preserves_layer_order():
@@ -17,14 +25,20 @@ def test_placement_plan_preserves_layer_order():
 
 def test_static_distribution_assigns_contiguous_ranges():
     nodes = [
-        NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28, 28),
-        NodeProfile("node-b", "10.0.0.2", "cpu", 32, 20, 20),
-        NodeProfile("node-c", "10.0.0.3", "cpu", 32, 18, 18),
+        NodeProfile(
+            "node-a", "10.0.0.1", "cpu", 32, 28, max_usable_bytes=_budget(0, 24)
+        ),
+        NodeProfile(
+            "node-b", "10.0.0.2", "cpu", 32, 20, max_usable_bytes=_budget(10, 18)
+        ),
+        NodeProfile(
+            "node-c", "10.0.0.3", "cpu", 32, 18, max_usable_bytes=_budget(18, 24)
+        ),
     ]
 
     plan = plan_static_distribution(
-        model_id="Qwen/Qwen2.5-0.5B-Instruct",
-        total_layers=24,
+        model_id=MODEL_ID,
+        total_layers=TOTAL_LAYERS,
         nodes=nodes,
     )
 
@@ -37,5 +51,4 @@ def test_static_distribution_assigns_contiguous_ranges():
     }
     # Best-quality node is filled first; 24 layers fit entirely on node-a.
     assert sizes == {"node-a": 24}
-    assert plan.coordinator_id == "node-a"
-    assert choose_coordinator(nodes) == "node-a"
+    assert plan.coordinator_id is None

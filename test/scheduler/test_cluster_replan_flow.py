@@ -1,5 +1,14 @@
 from scheduler.ClusterCoordinator import ClusterCoordinator
 from scheduler.ClusterTypes import NodeProfile
+from scheduler.ClusterPlanner import range_bytes
+
+
+MODEL_ID = "Qwen/Qwen2.5-0.5B-Instruct"
+TOTAL_LAYERS = 24
+
+
+def _budget(start: int, end: int) -> int:
+    return range_bytes(MODEL_ID, start, end, TOTAL_LAYERS)
 
 
 def test_reconfiguration_action_round_trip_preserves_action_fields():
@@ -96,70 +105,146 @@ def test_coordinator_builds_reconfiguration_plan_after_replan():
 
     coordinator = ClusterCoordinator(
         transport=None,
-        model_id="Qwen/Qwen2.5-0.5B-Instruct",
-        total_layers=24,
+        model_id=MODEL_ID,
+        total_layers=TOTAL_LAYERS,
     )
     initial_profiles = [
-        NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28, 30, loaded_shards=[(0, 12)]),
-        NodeProfile("node-b", "10.0.0.2", "cpu", 32, 27, 29, loaded_shards=[(12, 24)]),
+        NodeProfile(
+            "node-a",
+            "10.0.0.1",
+            "cpu",
+            32,
+            30,
+            loaded_shards=[(0, 12)],
+            max_usable_bytes=_budget(0, 12),
+        ),
+        NodeProfile(
+            "node-b",
+            "10.0.0.2",
+            "cpu",
+            32,
+            29,
+            loaded_shards=[(12, 24)],
+            max_usable_bytes=_budget(12, 24),
+        ),
     ]
     coordinator.build_plan(initial_profiles)
 
     changed_profiles = initial_profiles + [
-        NodeProfile("node-c", "10.0.0.3", "cuda", 64, 40, 80, loaded_shards=[]),
+        NodeProfile(
+            "node-c",
+            "10.0.0.3",
+            "cuda",
+            64,
+            80,
+            loaded_shards=[],
+            max_usable_bytes=_budget(0, 24),
+        ),
     ]
 
     reconfig = coordinator.build_reconfiguration(changed_profiles)
 
     assert isinstance(reconfig, ReconfigurationPlan)
     assert reconfig.model_id == coordinator.model_id
-    assert reconfig.actions_by_node == {
-        "node-a": [reconfig.actions_by_node["node-a"][0]]
-    }
-    assert reconfig.actions_by_node["node-a"][0].action == "keep"
+    assert reconfig.actions_by_node["node-a"][0].action == "unload"
+    assert reconfig.actions_by_node["node-c"][0].action == "move_in"
+    assert reconfig.actions_by_node["node-c"][0].from_node_id == "node-a"
+    assert any(
+        action.action == "unload" for action in reconfig.actions_by_node["node-b"]
+    )
 
 
 def test_join_reconfiguration_exposes_move_or_load_actions_for_new_node():
     coordinator = ClusterCoordinator(
         transport=None,
-        model_id="Qwen/Qwen2.5-0.5B-Instruct",
-        total_layers=24,
+        model_id=MODEL_ID,
+        total_layers=TOTAL_LAYERS,
     )
     initial_profiles = [
-        NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28, 30, loaded_shards=[(0, 12)]),
-        NodeProfile("node-b", "10.0.0.2", "cpu", 32, 27, 29, loaded_shards=[(12, 24)]),
+        NodeProfile(
+            "node-a",
+            "10.0.0.1",
+            "cpu",
+            32,
+            30,
+            loaded_shards=[(0, 12)],
+            max_usable_bytes=_budget(0, 12),
+        ),
+        NodeProfile(
+            "node-b",
+            "10.0.0.2",
+            "cpu",
+            32,
+            29,
+            loaded_shards=[(12, 24)],
+            max_usable_bytes=_budget(12, 24),
+        ),
     ]
     coordinator.build_plan(initial_profiles)
 
     expanded_profiles = initial_profiles + [
-        NodeProfile("node-c", "10.0.0.3", "cuda", 64, 40, 80, loaded_shards=[]),
+        NodeProfile(
+            "node-c",
+            "10.0.0.3",
+            "cuda",
+            64,
+            80,
+            loaded_shards=[],
+            max_usable_bytes=_budget(17, 24),
+        ),
     ]
 
     reconfig = coordinator.build_reconfiguration(expanded_profiles)
 
     assert reconfig.actions_by_node["node-c"][0].action == "move_in"
-    assert reconfig.actions_by_node["node-c"][0].from_node_id == "node-a"
+    assert reconfig.actions_by_node["node-c"][0].from_node_id == "node-b"
 
 
 def test_leave_reconfiguration_skips_unload_for_node_without_owned_shard():
     coordinator = ClusterCoordinator(
         transport=None,
-        model_id="Qwen/Qwen2.5-0.5B-Instruct",
-        total_layers=24,
+        model_id=MODEL_ID,
+        total_layers=TOTAL_LAYERS,
     )
     initial_profiles = [
-        NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28, 30, loaded_shards=[(0, 12)]),
-        NodeProfile("node-b", "10.0.0.2", "cpu", 32, 27, 29, loaded_shards=[(12, 24)]),
+        NodeProfile(
+            "node-a",
+            "10.0.0.1",
+            "cpu",
+            32,
+            30,
+            loaded_shards=[(0, 12)],
+            max_usable_bytes=_budget(0, 12),
+        ),
+        NodeProfile(
+            "node-b",
+            "10.0.0.2",
+            "cpu",
+            32,
+            29,
+            loaded_shards=[(12, 24)],
+            max_usable_bytes=_budget(12, 24),
+        ),
     ]
     coordinator.build_plan(initial_profiles)
 
     remaining_profiles = [
-        NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28, 30, loaded_shards=[(0, 12)]),
+        NodeProfile(
+            "node-a",
+            "10.0.0.1",
+            "cpu",
+            32,
+            30,
+            loaded_shards=[(0, 12)],
+            max_usable_bytes=_budget(0, 24),
+        ),
     ]
 
     reconfig = coordinator.build_reconfiguration(remaining_profiles)
 
-    assert "node-b" not in reconfig.actions_by_node
+    assert any(
+        action.action == "unload" for action in reconfig.actions_by_node["node-b"]
+    )
 
 
 def test_diff_assignment_changes_is_exported():
@@ -188,7 +273,16 @@ def test_compute_next_plan_without_current_plan_uses_cold_start(monkeypatch):
 
     result = planner.compute_next_plan(
         current=None,
-        nodes=[NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28, 30)],
+        nodes=[
+            NodeProfile(
+                "node-a",
+                "10.0.0.1",
+                "cpu",
+                32,
+                30,
+                max_usable_bytes=_budget(0, 24),
+            )
+        ],
         model_id="Qwen/Qwen2.5-0.5B-Instruct",
         total_layers=24,
     )
@@ -226,9 +320,15 @@ def test_compute_next_plan_uses_join_strategy_when_node_set_grows(monkeypatch):
     result = planner.compute_next_plan(
         current=current,
         nodes=[
-            NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28, 30),
-            NodeProfile("node-b", "10.0.0.2", "cpu", 32, 27, 29),
-            NodeProfile("node-c", "10.0.0.3", "cuda", 64, 40, 80),
+            NodeProfile(
+                "node-a", "10.0.0.1", "cpu", 32, 30, max_usable_bytes=_budget(0, 24)
+            ),
+            NodeProfile(
+                "node-b", "10.0.0.2", "cpu", 32, 29, max_usable_bytes=_budget(0, 24)
+            ),
+            NodeProfile(
+                "node-c", "10.0.0.3", "cuda", 64, 80, max_usable_bytes=_budget(0, 24)
+            ),
         ],
         model_id=current.model_id,
         total_layers=24,
@@ -266,7 +366,16 @@ def test_compute_next_plan_uses_drop_strategy_when_node_set_shrinks(monkeypatch)
 
     result = planner.compute_next_plan(
         current=current,
-        nodes=[NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28, 30)],
+        nodes=[
+            NodeProfile(
+                "node-a",
+                "10.0.0.1",
+                "cpu",
+                32,
+                30,
+                max_usable_bytes=_budget(0, 24),
+            )
+        ],
         model_id=current.model_id,
         total_layers=24,
     )
@@ -306,8 +415,12 @@ def test_compute_next_plan_uses_replan_strategy_when_node_set_is_unchanged(
     result = planner.compute_next_plan(
         current=current,
         nodes=[
-            NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28, 30),
-            NodeProfile("node-b", "10.0.0.2", "cpu", 32, 27, 29),
+            NodeProfile(
+                "node-a", "10.0.0.1", "cpu", 32, 30, max_usable_bytes=_budget(0, 24)
+            ),
+            NodeProfile(
+                "node-b", "10.0.0.2", "cpu", 32, 29, max_usable_bytes=_budget(0, 24)
+            ),
         ],
         model_id=current.model_id,
         total_layers=24,
@@ -335,14 +448,46 @@ def test_coordinator_can_replan_from_current_plan_when_profiles_change():
         total_layers=24,
     )
     initial_profiles = [
-        NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28, 30, loaded_shards=[(0, 12)]),
-        NodeProfile("node-b", "10.0.0.2", "cpu", 32, 27, 29, loaded_shards=[(12, 24)]),
+        NodeProfile(
+            "node-a",
+            "10.0.0.1",
+            "cpu",
+            32,
+            30,
+            loaded_shards=[(0, 12)],
+            max_usable_bytes=_budget(0, 12),
+        ),
+        NodeProfile(
+            "node-b",
+            "10.0.0.2",
+            "cpu",
+            32,
+            29,
+            loaded_shards=[(12, 24)],
+            max_usable_bytes=_budget(12, 24),
+        ),
     ]
     old_plan = coordinator.build_plan(initial_profiles)
 
     changed_profiles = [
-        NodeProfile("node-a", "10.0.0.1", "cpu", 32, 4, 10, loaded_shards=[]),
-        NodeProfile("node-b", "10.0.0.2", "cpu", 32, 27, 30, loaded_shards=[(12, 24)]),
+        NodeProfile(
+            "node-a",
+            "10.0.0.1",
+            "cpu",
+            32,
+            10,
+            loaded_shards=[],
+            max_usable_bytes=_budget(0, 4),
+        ),
+        NodeProfile(
+            "node-b",
+            "10.0.0.2",
+            "cpu",
+            32,
+            30,
+            loaded_shards=[(12, 24)],
+            max_usable_bytes=_budget(0, 24),
+        ),
     ]
 
     new_plan = coordinator.replan(changed_profiles)
@@ -362,8 +507,24 @@ def test_coordinator_replan_keeps_current_plan_when_shards_still_fit():
         total_layers=24,
     )
     profiles = [
-        NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28, 30, loaded_shards=[(0, 12)]),
-        NodeProfile("node-b", "10.0.0.2", "cpu", 32, 27, 29, loaded_shards=[(12, 24)]),
+        NodeProfile(
+            "node-a",
+            "10.0.0.1",
+            "cpu",
+            32,
+            30,
+            loaded_shards=[(0, 12)],
+            max_usable_bytes=_budget(0, 12),
+        ),
+        NodeProfile(
+            "node-b",
+            "10.0.0.2",
+            "cpu",
+            32,
+            29,
+            loaded_shards=[(12, 24)],
+            max_usable_bytes=_budget(12, 24),
+        ),
     ]
 
     initial = coordinator.build_plan(profiles)
@@ -379,13 +540,37 @@ def test_coordinator_replan_handles_node_leave_by_falling_back_to_static():
         total_layers=24,
     )
     initial_profiles = [
-        NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28, 30, loaded_shards=[(0, 12)]),
-        NodeProfile("node-b", "10.0.0.2", "cpu", 32, 27, 29, loaded_shards=[(12, 24)]),
+        NodeProfile(
+            "node-a",
+            "10.0.0.1",
+            "cpu",
+            32,
+            30,
+            loaded_shards=[(0, 12)],
+            max_usable_bytes=_budget(0, 12),
+        ),
+        NodeProfile(
+            "node-b",
+            "10.0.0.2",
+            "cpu",
+            32,
+            29,
+            loaded_shards=[(12, 24)],
+            max_usable_bytes=_budget(12, 24),
+        ),
     ]
     coordinator.build_plan(initial_profiles)
 
     remaining = [
-        NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28, 30, loaded_shards=[(0, 12)]),
+        NodeProfile(
+            "node-a",
+            "10.0.0.1",
+            "cpu",
+            32,
+            30,
+            loaded_shards=[(0, 12)],
+            max_usable_bytes=_budget(0, 24),
+        ),
     ]
 
     new_plan = coordinator.replan(remaining)
@@ -402,13 +587,37 @@ def test_coordinator_replan_can_shift_full_range_to_stronger_joining_node():
         total_layers=24,
     )
     initial_profiles = [
-        NodeProfile("node-a", "10.0.0.1", "cpu", 32, 28, 30, loaded_shards=[(0, 12)]),
-        NodeProfile("node-b", "10.0.0.2", "cpu", 32, 27, 29, loaded_shards=[(12, 24)]),
+        NodeProfile(
+            "node-a",
+            "10.0.0.1",
+            "cpu",
+            32,
+            30,
+            loaded_shards=[(0, 12)],
+            max_usable_bytes=_budget(0, 12),
+        ),
+        NodeProfile(
+            "node-b",
+            "10.0.0.2",
+            "cpu",
+            32,
+            29,
+            loaded_shards=[(12, 24)],
+            max_usable_bytes=_budget(12, 24),
+        ),
     ]
     current = coordinator.build_plan(initial_profiles)
 
     expanded_profiles = initial_profiles + [
-        NodeProfile("node-c", "10.0.0.3", "cuda", 64, 40, 80, loaded_shards=[]),
+        NodeProfile(
+            "node-c",
+            "10.0.0.3",
+            "cuda",
+            64,
+            80,
+            loaded_shards=[],
+            max_usable_bytes=_budget(0, 24),
+        ),
     ]
 
     new_plan = coordinator.replan(expanded_profiles)

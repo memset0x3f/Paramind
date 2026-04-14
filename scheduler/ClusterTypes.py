@@ -8,9 +8,9 @@ class NodeProfile:
     host: str
     device: str
     total_memory_gb: float
-    free_memory_gb: float
     compute_score: float
     loaded_shards: List[tuple[int, int]] = field(default_factory=list)
+    max_usable_bytes: Optional[int] = None
 
     def to_dict(self) -> dict:
         return {
@@ -18,9 +18,9 @@ class NodeProfile:
             "host": self.host,
             "device": self.device,
             "total_memory_gb": self.total_memory_gb,
-            "free_memory_gb": self.free_memory_gb,
             "compute_score": self.compute_score,
             "loaded_shards": [list(shard) for shard in self.loaded_shards],
+            "max_usable_bytes": self.max_usable_bytes,
         }
 
     @classmethod
@@ -30,9 +30,9 @@ class NodeProfile:
             host=data["host"],
             device=data["device"],
             total_memory_gb=data["total_memory_gb"],
-            free_memory_gb=data["free_memory_gb"],
             compute_score=data["compute_score"],
             loaded_shards=[tuple(shard) for shard in data.get("loaded_shards", [])],
+            max_usable_bytes=data.get("max_usable_bytes"),
         )
 
 

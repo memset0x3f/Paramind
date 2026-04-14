@@ -10,13 +10,16 @@ import socket
 import subprocess
 import time
 
-import torch
+try:
+    import torch
+except Exception:  # pragma: no cover - environment-dependent optional dependency
+    torch = None
 
 from scheduler.ClusterTypes import NodeProfile
 
 
 def _detect_device_type() -> str:
-    return "cuda" if torch.cuda.is_available() else "cpu"
+    return "cuda" if torch is not None and torch.cuda.is_available() else "cpu"
 
 
 def _parse_darwin_page_size_bytes(line: str) -> int | None:
@@ -156,7 +159,7 @@ def _detect_host_memory_gb() -> tuple[float, float]:
 
 
 def _detect_memory_gb() -> tuple[float, float]:
-    if torch.cuda.is_available():
+    if torch is not None and torch.cuda.is_available():
         props = torch.cuda.get_device_properties(0)
         total = props.total_memory / (1024**3)
         used = torch.cuda.memory_reserved(0) / (1024**3)
@@ -172,6 +175,8 @@ def _env_flag(name: str) -> bool:
 
 
 def _sync_torch_device(device: torch.device) -> None:
+    if torch is None:
+        return
     if device.type == "cuda":
         torch.cuda.synchronize()
     elif device.type == "mps" and hasattr(torch.mps, "synchronize"):
@@ -180,6 +185,8 @@ def _sync_torch_device(device: torch.device) -> None:
 
 def _benchmark_matmul_gflops(device_type: str) -> float:
     """Timed float32 GEMM; returns GFLOPS as the speed score (~100ms target on typical laptops)."""
+    if torch is None:
+        raise RuntimeError("torch is unavailable for benchmark")
     if device_type == "cuda" and torch.cuda.is_available():
         dev = torch.device("cuda")
         n, warmup, repeats = 768, 1, 4
@@ -231,7 +238,7 @@ class NodeState:
     total_memory_gb: float
     free_memory_gb: float
     kv_headroom_gb: float = 0.0
-    max_blocks_capacity: int | None = None
+    max_usable_bytes: int | None = None
     block_latency_ms: float | None = None
     block_throughput: float | None = None
     loaded_ranges: list[tuple[int, int]] = field(default_factory=list)
@@ -242,14 +249,11 @@ class NodeState:
     def effective_free_memory_gb(self) -> float:
         return max(self.free_memory_gb - self.kv_headroom_gb, 0.0)
 
-    def effective_capacity_blocks(self, block_memory_gb: float = 1.0) -> int:
-        if self.max_blocks_capacity is not None:
-            return max(self.max_blocks_capacity, 0)
-        if block_memory_gb <= 0:
-            raise ValueError("block_memory_gb must be positive")
-        return max(
-            int(math.floor(self.effective_free_memory_gb() / block_memory_gb)), 0
-        )
+    def effective_usable_bytes(self) -> int:
+        usable = int(self.effective_free_memory_gb() * (1024**3))
+        if self.max_usable_bytes is not None:
+            return max(min(usable, self.max_usable_bytes), 0)
+        return max(usable, 0)
 
     def effective_speed(self) -> float:
         if self.block_throughput is not None and self.block_throughput > 0:
@@ -269,7 +273,7 @@ class NodeState:
             "total_memory_gb": self.total_memory_gb,
             "free_memory_gb": self.free_memory_gb,
             "kv_headroom_gb": self.kv_headroom_gb,
-            "max_blocks_capacity": self.max_blocks_capacity,
+            "max_usable_bytes": self.max_usable_bytes,
             "block_latency_ms": self.block_latency_ms,
             "block_throughput": self.block_throughput,
             "loaded_ranges": [list(item) for item in self.loaded_ranges],
@@ -287,7 +291,7 @@ class NodeState:
             total_memory_gb=data["total_memory_gb"],
             free_memory_gb=data["free_memory_gb"],
             kv_headroom_gb=data.get("kv_headroom_gb", 0.0),
-            max_blocks_capacity=data.get("max_blocks_capacity"),
+            max_usable_bytes=data.get("max_usable_bytes"),
             block_latency_ms=data.get("block_latency_ms"),
             block_throughput=data.get("block_throughput"),
             loaded_ranges=[tuple(item) for item in data.get("loaded_ranges", [])],
@@ -319,8 +323,9 @@ def from_local_snapshot(
         total_memory_gb=total_memory_gb,
         free_memory_gb=free_memory_gb,
         kv_headroom_gb=kv_headroom_gb,
-        max_blocks_capacity=max(
-            int(math.floor(max(free_memory_gb - kv_headroom_gb, 0.0))), 0
+        max_usable_bytes=max(
+            int(math.floor(max(free_memory_gb - kv_headroom_gb, 0.0) * (1024**3))),
+            0,
         ),
         block_throughput=benchmark_block_speed(device_type),
         loaded_ranges=loaded_ranges,
@@ -345,14 +350,21 @@ def normalize_node_state(value) -> NodeState:
     if isinstance(value, NodeState):
         return value
     if isinstance(value, NodeProfile):
+        if value.max_usable_bytes is None:
+            raise ValueError(
+                "NodeProfile.max_usable_bytes is required for planning. "
+                "Please provide an explicit byte budget from a hardware/profile scan."
+            )
+        usable_bytes = value.max_usable_bytes
+        usable_gb = usable_bytes / (1024**3)
         return NodeState(
             node_id=value.node_id,
             host=value.host,
             device_type=value.device,
             total_memory_gb=value.total_memory_gb,
-            free_memory_gb=value.free_memory_gb,
+            free_memory_gb=usable_gb,
             kv_headroom_gb=0.0,
-            max_blocks_capacity=max(int(math.floor(value.free_memory_gb)) * 2, 0),
+            max_usable_bytes=max(usable_bytes, 0),
             block_throughput=max(value.compute_score, 0.1),
             loaded_ranges=list(value.loaded_shards),
         )

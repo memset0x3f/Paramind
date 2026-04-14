@@ -5,6 +5,7 @@ import itertools
 import json
 import time
 
+from models import ensure_model_info
 from scheduler.ClusterPlanner import (
     compute_next_plan,
     diff_assignment_changes,
@@ -21,13 +22,14 @@ from scheduler.NodeInventory import NodeState, normalize_node_state
 class ClusterCoordinator:
     _reconfig_id_counter = itertools.count(1)
 
-    def __init__(self, transport, model_id: str, total_layers: int):
+    def __init__(self, transport, model_id: str, total_layers: int | None = None):
         self.transport = transport
         self.model_id = model_id
         self.total_layers = total_layers
         self.current_node_ids: set[str] = set()
         self.ready_nodes: set[str] = set()
         self.current_plan: PlacementPlan | None = None
+        self.planning_error: str | None = None
         self.last_reconfiguration: ReconfigurationPlan | None = None
         self.pending_reconfiguration: ReconfigurationPlan | None = None
         self.reconfig_ready_nodes: set[str] = set()
@@ -38,34 +40,18 @@ class ClusterCoordinator:
         self.commit_started_at: float | None = None
         self.completed_at: float | None = None
 
-    def build_plan(self, profiles) -> PlacementPlan:
-        normalized_profiles = [
-            (
-                profile
-                if isinstance(profile, (NodeProfile, NodeState))
-                else (
-                    NodeState.from_dict(profile)
-                    if "device_type" in profile
-                    else NodeProfile.from_dict(profile)
-                )
+    def _planner_total_layers(self) -> int:
+        info = ensure_model_info(self.model_id)
+        if self.total_layers is None:
+            self.total_layers = info.total_layers
+        elif self.total_layers != info.total_layers:
+            raise ValueError(
+                f"Configured total_layers={self.total_layers} mismatches profile "
+                f"layers={info.total_layers} for {self.model_id}"
             )
-            for profile in profiles
-        ]
-        self.current_node_ids = {
-            profile.node_id
-            for profile in normalized_profiles
-            if normalize_node_state(profile).online
-        }
-        plan = compute_next_plan(
-            current=None,
-            nodes=normalized_profiles,
-            model_id=self.model_id,
-            total_layers=self.total_layers,
-        )
-        self.current_plan = plan
-        return plan
+        return self.total_layers
 
-    def replan(self, profiles) -> PlacementPlan:
+    def build_plan(self, profiles) -> PlacementPlan | None:
         normalized_profiles = [
             (
                 profile
@@ -83,20 +69,63 @@ class ClusterCoordinator:
             for profile in normalized_profiles
             if normalize_node_state(profile).online
         }
-        self.current_plan = compute_next_plan(
-            current=self.current_plan,
-            nodes=normalized_profiles,
-            model_id=self.model_id,
-            total_layers=self.total_layers,
-            previous_node_ids=self.current_node_ids,
-        )
+        try:
+            total_layers = self._planner_total_layers()
+            plan = compute_next_plan(
+                current=None,
+                nodes=normalized_profiles,
+                model_id=self.model_id,
+                total_layers=total_layers,
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            self.planning_error = str(exc)
+            return None
+        self.planning_error = None
+        self.current_node_ids = next_node_ids
+        self.current_plan = plan
+        return plan
+
+    def replan(self, profiles) -> PlacementPlan | None:
+        normalized_profiles = [
+            (
+                profile
+                if isinstance(profile, (NodeProfile, NodeState))
+                else (
+                    NodeState.from_dict(profile)
+                    if "device_type" in profile
+                    else NodeProfile.from_dict(profile)
+                )
+            )
+            for profile in profiles
+        ]
+        next_node_ids = {
+            profile.node_id
+            for profile in normalized_profiles
+            if normalize_node_state(profile).online
+        }
+        try:
+            total_layers = self._planner_total_layers()
+            next_plan = compute_next_plan(
+                current=self.current_plan,
+                nodes=normalized_profiles,
+                model_id=self.model_id,
+                total_layers=total_layers,
+                previous_node_ids=self.current_node_ids,
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            self.planning_error = str(exc)
+            return None
+        self.planning_error = None
+        self.current_plan = next_plan
         self.current_node_ids = next_node_ids
         return self.current_plan
 
-    def build_reconfiguration(self, profiles) -> ReconfigurationPlan:
+    def build_reconfiguration(self, profiles) -> ReconfigurationPlan | None:
         previous = self.current_plan
         if previous is None:
             new_plan = self.build_plan(profiles)
+            if new_plan is None:
+                return None
             actions_by_node: dict[str, list[NodeReconfigurationAction]] = {}
             for assignment in new_plan.assignments:
                 actions_by_node.setdefault(assignment.node_id, []).append(
@@ -116,6 +145,8 @@ class ClusterCoordinator:
             return self.last_reconfiguration
 
         new_plan = self.replan(profiles)
+        if new_plan is None:
+            return None
         actions = diff_assignment_changes(previous, new_plan)
         self.last_reconfiguration = ReconfigurationPlan(
             model_id=new_plan.model_id,

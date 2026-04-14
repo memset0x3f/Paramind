@@ -182,6 +182,7 @@ class ClusterCoordinator:
             json.dumps(
                 {
                     "type": "cluster_reconfigure_prepare",
+                    "reconfiguration_id": self.reconfiguration_id,
                     "model_id": reconfiguration.model_id,
                     "coordinator_id": reconfiguration.coordinator_id,
                     "actions_by_node": {
@@ -193,10 +194,17 @@ class ClusterCoordinator:
             include_self=True,
         )
 
-    def mark_reconfig_ready(self, node_id: str):
-        self.reconfig_ready_nodes.add(node_id)
+    def mark_reconfig_ready(self, node_id: str, reconfiguration_id: int | None = None):
         if self.pending_reconfiguration is None:
             return
+        current_reconfiguration_id = self.reconfiguration_id
+        if (
+            reconfiguration_id is not None
+            and current_reconfiguration_id is not None
+            and reconfiguration_id != current_reconfiguration_id
+        ):
+            return
+        self.reconfig_ready_nodes.add(node_id)
         expected = set(self.pending_reconfiguration.actions_by_node.keys())
         if expected.issubset(self.reconfig_ready_nodes):
             self.phase = "commit"
@@ -205,6 +213,7 @@ class ClusterCoordinator:
                 json.dumps(
                     {
                         "type": "cluster_reconfigure_commit",
+                        "reconfiguration_id": self.reconfiguration_id,
                         "model_id": self.pending_reconfiguration.model_id,
                         "coordinator_id": self.pending_reconfiguration.coordinator_id,
                         "actions_by_node": {

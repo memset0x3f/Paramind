@@ -352,7 +352,7 @@ def normalize_node_state(value) -> NodeState:
             total_memory_gb=value.total_memory_gb,
             free_memory_gb=value.free_memory_gb,
             kv_headroom_gb=0.0,
-            max_blocks_capacity=max(int(math.floor(value.free_memory_gb)), 0),
+            max_blocks_capacity=max(int(math.floor(value.free_memory_gb)) * 2, 0),
             block_throughput=max(value.compute_score, 0.1),
             loaded_ranges=list(value.loaded_shards),
         )

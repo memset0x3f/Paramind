@@ -38,7 +38,7 @@ class NodeRuntime:
         shard_assignment: ShardAssignment | None = None,
         device: str = "cpu",
         loader=None,
-        on_ready: Optional[Callable[[str], Any]] = None,
+        on_ready: Optional[Callable[..., Any]] = None,
     ):
         self.node_id = str(node_id)
         self.node_group = node_group
@@ -81,10 +81,13 @@ class NodeRuntime:
         self.p2p_client.register_handler("newPeer", self.handle_newPeer)
         self.p2p_client.register_handler("cluster_plan", self.handle_cluster_plan)
         self.p2p_client.register_handler(
-            "reconfiguration_prepare", self.handle_reconfiguration_prepare
+            "cluster_reconfigure_prepare", self.handle_reconfiguration_prepare
         )
         self.p2p_client.register_handler(
-            "reconfiguration_commit", self.handle_reconfiguration_commit
+            "cluster_reconfigure_commit", self.handle_reconfiguration_commit
+        )
+        self.p2p_client.register_handler(
+            "cluster_reconfigure_ready", self.handle_reconfiguration_ready
         )
         self.p2p_client.register_handler("torchInput", self.handle_torch_input)
         self.p2p_client.register_handler("torchOutput", self.handle_torch_output)
@@ -130,11 +133,10 @@ class NodeRuntime:
             assert (
                 self.coordinator is not None
             ), "Coordinator instance should be initialized"
-            plan = self.coordinator.build_plan(
+            reconfig = self.coordinator.build_reconfiguration(
                 profiles=list(self.peer_profiles.values())
             )
-            self.coordinator.broadcast_plan(plan)
-            # self._update_route()
+            self.coordinator.begin_reconfiguration(reconfig)
 
     def handle_allPeers(self, payload: dict):
         peers = payload.get("peers", [])
@@ -163,12 +165,6 @@ class NodeRuntime:
                 profiles=list(self.peer_profiles.values())
             )
             self.coordinator.broadcast_plan(plan)
-            # self.global_assignments = plan.assignments
-            # for assignment in self.global_assignments:
-            #     if assignment.node_id == self.node_id:
-            #         self.assignment = assignment
-            # self.apply_assignment(model_id=self.model_id, assignment=self.assignment)
-            # self._update_route()
 
     def _select_assignment(self, payload: dict) -> ShardAssignment | None:
         for item in payload.get("assignments", []):
@@ -347,7 +343,10 @@ class NodeRuntime:
         result = self.prepare_reconfiguration(
             model_id=payload["model_id"], actions=actions
         )
-        self.signal_ready()
+        self.signal_ready(
+            reconfiguration_id=payload.get("reconfiguration_id"),
+            coordinator_id=payload.get("coordinator_id"),
+        )
         return result
 
     def handle_reconfiguration_commit(self, payload: dict):
@@ -357,9 +356,51 @@ class NodeRuntime:
         self.commit_reconfiguration(actions)
         return actions
 
-    def signal_ready(self):
+    def handle_reconfiguration_ready(self, payload: dict):
+        if not self.is_coordinator or self.coordinator is None:
+            return None
+        target_coordinator_id = payload.get("coordinator_id")
+        if (
+            target_coordinator_id is not None
+            and str(target_coordinator_id) != self.node_id
+        ):
+            return None
+        if payload.get("model_id") not in {None, self.model_id}:
+            return None
+        node_id = payload.get("node_id")
+        if not node_id:
+            return None
+        self.coordinator.mark_reconfig_ready(
+            str(node_id),
+            payload.get("reconfiguration_id"),
+        )
+        return payload
+
+    def signal_ready(
+        self,
+        reconfiguration_id: int | None = None,
+        coordinator_id: str | None = None,
+    ):
+        if coordinator_id is not None:
+            self.p2p_client.sendToPeer(
+                json.dumps(
+                    {
+                        "type": "cluster_reconfigure_ready",
+                        "model_id": self.model_id,
+                        "node_id": self.node_id,
+                        "coordinator_id": coordinator_id,
+                        "reconfiguration_id": reconfiguration_id,
+                    }
+                ).encode("utf-8"),
+                coordinator_id,
+            )
         if self.on_ready is not None:
-            return self.on_ready(self.node_id)
+            if reconfiguration_id is None:
+                return self.on_ready(self.node_id)
+            try:
+                return self.on_ready(self.node_id, reconfiguration_id)
+            except TypeError:
+                return self.on_ready(self.node_id)
         return None
 
     def apply_assignment(self, model_id: str, assignment: ShardAssignment):

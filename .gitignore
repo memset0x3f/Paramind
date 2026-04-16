@@ -245,3 +245,6 @@ tsconfig.tsbuildinfo
 .npm/
 .yarn/
 .pnpm-store/
+
+# Essay Related & Dev Files
+docs

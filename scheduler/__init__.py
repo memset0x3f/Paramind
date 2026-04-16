@@ -14,6 +14,11 @@ __all__ = [
 
 
 def __getattr__(name: str):
-    if name in {"ClusterTypes", "ClusterPlanner", "ClusterCoordinator", "DeviceProfile"}:
+    if name in {
+        "ClusterTypes",
+        "ClusterPlanner",
+        "ClusterCoordinator",
+        "DeviceProfile",
+    }:
         return import_module(f"scheduler.{name}")
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

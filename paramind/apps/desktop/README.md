@@ -1,112 +1,69 @@
-# ParaMind desktop app
+# ParaMind Desktop App
 
-This directory contains the Electron shell, renderer, and FastAPI backend for the ParaMind desktop demo.
+## What this module is
 
-## Quick start
+`paramind/apps/desktop/` contains the current user-facing ParaMind prototype: an Electron shell, a renderer, and a Python backend that exposes chat-style distributed inference sessions. This directory is the most complete application surface in the repo, but it is still a prototype rather than a polished product.
 
-Install both the Python and Node parts before running tests or launching Electron:
+## Directory structure
+
+```text
+paramind/apps/desktop/
+├── assets/                 # application assets
+├── docs/                   # app-specific notes and packaging docs
+├── electron/               # Electron main-process code
+├── python/                 # FastAPI backend and coordinator-side Python code
+├── renderer/               # HTML/CSS/JS renderer UI
+├── scripts/                # launch/build helper scripts
+├── package.json            # Node/Electron package definition
+└── playwright.config.mjs   # browser-test configuration
+```
+
+## Key responsibilities / boundaries
+
+This directory owns:
+- the desktop shell and renderer,
+- the desktop-local FastAPI backend,
+- local coordination between frontend state and backend behavior,
+- packaging scripts and browser-based frontend harness support.
+
+It does **not** own the repo’s core planning or inference logic in isolation; those are imported from top-level modules and adapted into the app.
+
+## Key entrypoints or important files
+
+- [`python/README.md`](python/README.md): backend entry layer and service startup
+- [`python/app/README.md`](python/app/README.md): backend core modules
+- [`renderer/README.md`](renderer/README.md): renderer structure and UI behavior
+- [`scripts/README.md`](scripts/README.md): build and launch helpers
+- `package.json`: Node-side scripts and packaging metadata
+
+## How to run / verify
+
+From this directory:
 
 ```bash
-cd /Users/acropolis/Github_Project/Paramind/paramind/apps/desktop
 uv sync
 npm ci
 ```
 
-Use `uv` as the development source of truth for Python dependencies. `requirements.txt` is kept for the portable packaged Python runtime built by `npm run build:python`.
-
-To launch two local Electron peers from a shell script:
-
-- macOS / Linux: `bash scripts/start_chat.sh`
-- Windows (experimental): `npm run start:chat:win`
-
-## Run modes
-
-- **Development mode**: Electron starts the desktop backend through `uv run --project ... python`, so it does not rely on a local `.venv` path.
-- **Packaged mode**: Electron starts `python-dist/bin/python3` plus the bundled `python/` source tree from `process.resourcesPath`.
-
-Both modes use `PYTHONPATH=<...>/python` and desktop-local imports such as `from app...`, so they no longer depend on the repo root or `paramind.apps.desktop.python...`.
-
-## Frontend testing workflow
-
-Use the browser harness by default when you are working on renderer behavior.
-
-### Fast loop — no Electron required
-
-From the repo root:
+Common flows:
 
 ```bash
+bash scripts/start_chat.sh
+npm run start:chat:win
 make test-frontend-fast
-```
-
-This runs:
-- renderer state tests in `/Users/acropolis/Github_Project/Paramind/test/backend/test_chat_state.mjs`
-- harness unit tests in `/Users/acropolis/Github_Project/Paramind/test/backend/test_renderer_harness.mjs`
-- Playwright browser tests in `/Users/acropolis/Github_Project/Paramind/test/backend/test_renderer_harness.spec.mjs`
-
-### Open the renderer harness manually
-
-```bash
 make open-frontend-harness
-```
-
-Then open:
-
-- `http://127.0.0.1:4173/dev_harness.html?harness=1`
-
-Useful query fixtures:
-- `?fixture=bootstrap_two_peers`
-- `?fixture=accepted_dm`
-- `?fixture=ai_streaming_draft`
-- `?fixture=published_ai_message`
-
-### When to use Electron smoke instead
-
-Use the smoke path only when your change depends on:
-- preload bridge behavior
-- backend bootstrap payload shape
-- real inference startup
-- final integration before merge
-
-```bash
 make test-frontend-smoke
 ```
 
-## Files added for the frontend-first test loop
+Use the fast browser harness first when you are working on renderer behavior. Reserve the Electron smoke path for preload, backend bootstrapping, real inference startup, or final integration checks.
 
-- `/Users/acropolis/Github_Project/Paramind/paramind/apps/desktop/renderer/dev_harness.html`
-- `/Users/acropolis/Github_Project/Paramind/paramind/apps/desktop/renderer/dev_harness.js`
-- `/Users/acropolis/Github_Project/Paramind/paramind/apps/desktop/renderer/harness_fixtures.js`
-- `/Users/acropolis/Github_Project/Paramind/test/backend/test_renderer_harness.mjs`
-- `/Users/acropolis/Github_Project/Paramind/test/backend/test_renderer_harness.spec.mjs`
-- `/Users/acropolis/Github_Project/Paramind/paramind/apps/desktop/playwright.config.mjs`
+## Dependencies / related modules
 
-## 打包运行时
+- Backend details: [`python/README.md`](python/README.md)
+- Renderer details: [`renderer/README.md`](renderer/README.md)
+- Launch/build helpers: [`scripts/README.md`](scripts/README.md)
+- Core inference and scheduling modules live at the repo root
 
-desktop 打包不再依赖开发机 `.venv` 或 repo root。Python 运行时现在约定为：
+## Current status / limitations
 
-- `python-dist/`：portable Python 发行版
-- `python/`：desktop backend/coordinator 源码
-
-构建 portable Python：
-
-```bash
-cd /Users/acropolis/Github_Project/Paramind/paramind/apps/desktop
-npm run build:python
-```
-
-打包后的 Electron 主进程会在 packaged 模式下从 `process.resourcesPath` 解析：
-
-- `python-dist/bin/python3`
-- `python/backend.py`
-- `python/app/coordinator.py`
-
-开发态和打包态都通过 `PYTHONPATH=<...>/python` 加载 desktop 本地 Python 包，不再依赖 `paramind.apps.desktop.python...` 的源码树包路径。
-
-## Packaging status
-
-- `npm run build:python` currently provides default `python-build-standalone` assets for:
-  - macOS Apple Silicon
-  - macOS Intel
-  - Linux x86_64
-- Windows packaging metadata still exists in `package.json`, but the portable Python bootstrap script does not yet provide a default Windows asset. Treat Windows packaging as incomplete until that runtime path is added and smoke-tested.
-- The Windows multi-instance launcher is currently **experimental**. It is intended as a starting point for Windows contributors, and local shell / npm / networking differences may require manual edits.
+The desktop app is the most visible prototype surface, but it is not fully hardened. Packaging exists, frontend harnesses exist, and local multi-peer flows can be demonstrated, but production-level packaging, failure handling, and long-running distributed validation are still incomplete.

@@ -1,57 +1,64 @@
 # ParaMind
 
-## 文件结构
+ParaMind is an experimental repository for distributed large-language-model inference on user-controlled peers. The repo is organized around four main lines of work: model execution, cluster planning, peer-to-peer transport, and a desktop application prototype that exposes the runtime as a chat-style session.
 
-这个 README 现在只承担一件事：**作为仓库目录导航**。运行细节、算法解释、推理生命周期、desktop 行为、测试策略，都应该去各自子目录里的文档看，而不是继续堆在根 README 里。
+## Start here
 
-```text
-Paramind/
-├── common/                    # 共享概念、常量、配置工具
-├── docs/                      # 计划、设计记录、研究 diary、总览说明
-├── inference/                 # 分片加载、执行引擎、runtime lifecycle
-├── scheduler/                 # 节点画像、分配、replan、coordinator、调度指标
-├── p2p/                       # P2P / transport 相关实验与适配代码
-├── paramind/apps/desktop/     # Electron + FastAPI + SQLite 桌面应用
-├── scripts/                   # 根目录可直接运行的 demo / 辅助脚本
-├── test/                      # backend / inference / scheduler / p2p / common 测试
-├── requirements.txt           # 根目录 Python 依赖
-├── pytest.ini                 # pytest 配置
-└── Makefile                   # 常用根目录命令入口
-```
+- **Understand inference and shard runtime**: see [`inference/README.md`](inference/README.md)
+- **Understand planning and reconfiguration**: see [`scheduler/README.md`](scheduler/README.md)
+- **Understand the desktop app prototype**: see [`paramind/apps/desktop/README.md`](paramind/apps/desktop/README.md)
+- **Run demos and developer entrypoints**: see [`scripts/README.md`](scripts/README.md)
+- **Inspect test coverage by subsystem**: see the READMEs under [`test/`](test/)
 
-如果你是第一次进这个仓库，最常见的入口有四个：想看推理执行与 shard runtime，就从 `inference/README.md` 开始；想看调度和分配逻辑，就从 `scheduler/README.md` 开始；想看 desktop app，就从 `paramind/apps/desktop/` 开始；想跑演示，就看 `scripts/`。
+## Architecture map
 
-如果你正在改 desktop 前端，默认不要先起双 Electron。先跑 `make test-frontend-fast`，或用 `make open-frontend-harness` 打开浏览器 harness；只有 preload、真实 inference、最终双实例联调才需要 `make test-frontend-smoke`。
+- [`common/`](common/README.md): shared concepts, configuration helpers, constants, and utility functions
+- [`models/`](models/README.md): local model registry and model-profile generation
+- [`inference/`](inference/README.md): shard loading, execution engines, and runtime shard lifecycle
+- [`scheduler/`](scheduler/README.md): node profiling, placement, replanning, and coordinator-side orchestration
+- [`p2p/`](p2p/README.md): peer discovery and transport-side communication primitives
+- [`paramind/apps/desktop/`](paramind/apps/desktop/README.md): Electron shell, renderer, and FastAPI backend prototype
+- [`scripts/`](scripts/README.md): demos and helper scripts that expose repo behavior from the command line
+- [`test/`](test/backend/README.md): subsystem-specific test groups for backend, inference, scheduler, P2P, and shared code
+- [`docs/`](docs/): project notes, plans, essays, and research artifacts
 
-## 关键接口
+## Module index
 
-根 README 不再承担子系统 API 手册的职责；这里仅保留“从哪里进入”的接口导航。
+### Core modules
+- [`common/README.md`](common/README.md)
+- [`models/README.md`](models/README.md)
+- [`inference/README.md`](inference/README.md)
+- [`scheduler/README.md`](scheduler/README.md)
+- [`p2p/README.md`](p2p/README.md)
 
-### 仓库级导航入口
+### Desktop application
+- [`paramind/apps/desktop/README.md`](paramind/apps/desktop/README.md)
+- [`paramind/apps/desktop/python/README.md`](paramind/apps/desktop/python/README.md)
+- [`paramind/apps/desktop/python/app/README.md`](paramind/apps/desktop/python/app/README.md)
+- [`paramind/apps/desktop/renderer/README.md`](paramind/apps/desktop/renderer/README.md)
+- [`paramind/apps/desktop/scripts/README.md`](paramind/apps/desktop/scripts/README.md)
 
-- `inference/README.md`：`inference/` 子系统说明，重点讲 `ShardLoader`、`NodeRuntime`、`ShardRegistry`、runtime lifecycle 和 delivery demo。
-- `scheduler/README.md`：`scheduler/` 子系统说明，重点讲 `NodeState -> PlacementPlan -> ReconfigurationPlan`、静态分配、replan、coordinator、hardware snapshot。
-- `docs/plans/`：实现计划、设计草案、研究笔记。
-- `docs/diary/`：按天记录的验证、决策和变更轨迹。
-- `paramind/apps/desktop/`：当前最可用的桌面应用实现，里面包含 Electron 主进程、renderer、FastAPI backend、desktop 本地运行脚本。
-- `scripts/delivery_demo.py`：统一交付展示入口；如果只想看一条完整展示链，先从这里跑。
+### Scripts and demos
+- [`scripts/README.md`](scripts/README.md)
 
-### 目录到职责的快速映射
+### Test groups
+- [`test/backend/README.md`](test/backend/README.md)
+- [`test/common/README.md`](test/common/README.md)
+- [`test/inference/README.md`](test/inference/README.md)
+- [`test/loader/README.md`](test/loader/README.md)
+- [`test/p2p/README.md`](test/p2p/README.md)
+- [`test/scheduler/README.md`](test/scheduler/README.md)
 
-- `common/`：仓库早期共用的基础模块。
-- `inference/`：模型 shard 加载、本地推理执行、distributed simulation、runtime lifecycle。
-- `scheduler/`：节点画像、placement、replan、coordinator、cluster-level orchestration。
-- `p2p/`：更偏 transport / networking 的实验区，不等于完整 app。
-- `paramind/apps/desktop/`：当前用户可感知的产品原型。
-- `scripts/`：给开发、调试、演示使用的命令行入口，不是生产服务。
-- `test/`：按子系统分层的测试集合；`test/backend/` 更偏 desktop backend，`test/inference/` 更偏 shard 执行与 runtime，`test/scheduler/` 更偏分配与编排，`test/p2p/` 只保留 transport 测试。
+## Reading order
 
-## 关键逻辑
+If you are new to the repo, the most productive reading order is:
 
-这个仓库现在不是“单一应用 + 单一运行面”，而是几条并行演进的线放在同一个 repo 里。`scheduler/` 负责节点状态、placement、replan 和 coordinator；`inference/` 负责分片加载、运行时执行和 shard lifecycle；`p2p/` 负责更底层的 transport / networking 实验；`paramind/apps/desktop/` 负责 Electron + FastAPI + SQLite 的产品原型。阅读顺序不应该从根 README 里一路向下找实现，而应该先决定自己关注的是哪条线，再进入对应子目录。
+1. [`README.md`](README.md) for module navigation
+2. [`inference/README.md`](inference/README.md) and [`scheduler/README.md`](scheduler/README.md) for the core runtime split
+3. [`p2p/README.md`](p2p/README.md) for transport responsibilities
+4. [`paramind/apps/desktop/README.md`](paramind/apps/desktop/README.md) for the user-facing prototype
+5. [`scripts/README.md`](scripts/README.md) if you want runnable demonstrations before reading more code
 
-根目录的 `scripts/` 是把这些能力串起来的“看得见的入口”。如果你想直接观察系统行为而不是先读源码，优先看 `scripts/delivery_demo.py`、`scripts/cluster_planner_demo.py`、`scripts/runtime_lifecycle_demo.py` 和 `scripts/scan_local_hardware.py`。如果你想理解背后的实现，再回到 `scheduler/README.md` 和 `inference/README.md`。
+## Current status
 
-## 当前状态 / 验证 / 下一步
-
-根 README 当前只负责目录导航，不再承载子系统运行说明。现在最稳定的入口是：看执行层就读 `inference/README.md`；看调度层就读 `scheduler/README.md`；看应用原型就看 `paramind/apps/desktop/`；看设计背景就看 `docs/plans/` 和 `docs/diary/`；要直接演示就跑 `scripts/delivery_demo.py`。
+This repository contains an active prototype rather than a finished product. Some modules are mature enough to guide development directly, while others are still experimental or optimized for local demos and research iteration. The READMEs in each module describe those boundaries explicitly so the root README can remain a navigation hub rather than a second copy of subsystem internals.

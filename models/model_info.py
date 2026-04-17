@@ -7,8 +7,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from safetensors import safe_open
-
 from .resolve import models_dir, resolve_weights_dir, safe_model_id
 
 _LAYER_RE = re.compile(r"(?:^|\.)layers\.(\d+)\.")
@@ -123,6 +121,14 @@ def _build_sections(
 
 
 def analyze_model_dir(model_dir: str | Path) -> dict[str, Any]:
+    try:
+        from safetensors import safe_open
+    except ImportError as exc:
+        raise ImportError(
+            "safetensors is required to analyze model directories. "
+            "Install it with `pip install safetensors`."
+        ) from exc
+
     model_path = Path(model_dir)
     files = sorted(model_path.glob("*.safetensors"))
     if not files:

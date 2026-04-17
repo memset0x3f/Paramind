@@ -1,6 +1,11 @@
 # Lightweight exports available eagerly; heavy torch/transformers users stay lazy.
-from .ModelSplitter import QwenSlice
 from .ShardConfig import ModelFamily, ShardConfig
+
+try:
+    from .ModelSplitter import QwenSlice
+except ImportError:
+    # ModelSplitter is a legacy path and may be absent in lightweight installs.
+    QwenSlice = None
 
 
 def __getattr__(name):
